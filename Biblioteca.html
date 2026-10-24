@@ -55,7 +55,9 @@ function filaItem(it) {
   const acc = el('td', 'tabla-col-acciones');
   const b = el('button', 'btn btn-primario btn-chico');
   b.type = 'button'; b.title = 'Ensayar ' + it.titulo; b.setAttribute('aria-label', 'Ensayar ' + it.titulo);
-  const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, ' Ensayo'); refrescarIconos(); };
+  // Lucide solo dibuja los iconos que ya están en la página: la fila aún no lo está, así que renderTabla()
+  // llama a refrescarIconos() una vez cuando todas las filas están insertadas.
+  const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, ' Ensayo'); };
   etiqueta();
   b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = 'Abriendo…';
@@ -65,7 +67,7 @@ function filaItem(it) {
       window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id);
       mostrarPanel('ensayo');
     } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
-    finally { b.disabled = false; etiqueta(); }
+    finally { b.disabled = false; etiqueta(); refrescarIconos(); }
   });
   acc.appendChild(b); tr.appendChild(acc);
   return tr;
@@ -81,6 +83,7 @@ function renderTabla() {
   else if (!est.items.length) cuerpo.appendChild(celdaMensaje('Todavía no hay MIDIs. Sube el primero con «Subir MIDI».'));
   else if (!visibles.length) cuerpo.appendChild(celdaMensaje('Ningún título coincide con la búsqueda.'));
   else visibles.forEach((it) => cuerpo.appendChild(filaItem(it)));
+  refrescarIconos();
 }
 
 async function cargarLista() {
