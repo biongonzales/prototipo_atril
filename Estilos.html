@@ -454,6 +454,12 @@
   .play { min-width: 150px; font-size: 15px; }
   .play svg { width: 16px; height: 16px; fill: currentColor; }
   .toggle[aria-pressed="true"] { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
+  .btn-icono { width: 40px; padding: 0; justify-content: center; }
+  .btn-icono svg { width: 18px; height: 18px; }
+  .modo-desliz { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  .modo-desliz input[type="range"] { width: 150px; accent-color: var(--teal-700); cursor: pointer; }
+  @media (max-width: 640px) { .modo-desliz { margin-left: 0; flex: 1 1 100%; } .modo-desliz input[type="range"] { flex: 1; width: auto; } }
+  .modo-desliz output { font: 600 14px 'Outfit', 'Segoe UI', Roboto, Arial, sans-serif; color: var(--slate-900); min-width: 8.5em; }
   .seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--slate-300); border-radius: 10px; overflow: hidden; }
   .seg button {
     border: none; border-radius: 0; background: transparent; min-height: 38px; padding: 7px 14px;

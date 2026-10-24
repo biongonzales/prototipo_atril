@@ -95,7 +95,6 @@
                 <tbody id="bib-cuerpo"></tbody>
               </table>
             </div>
-            <p class="ayuda-score">También puedes arrastrar un archivo MIDI sobre la tabla para subirlo.</p>
           </div>
         </section>
 
@@ -230,7 +229,6 @@
             <div class="paper">
               <div id="score"></div>
             </div>
-            <p class="ayuda-score">Toca una nota o un compás para marcar el inicio del tramo, y toca otra para marcar el final. Un tercer toque empieza un tramo nuevo. Para quitar el tramo, toca fuera de la partitura o pulsa Esc.</p>
           </div>
 
           <div class="dash-tarjeta" aria-label="Tramo de práctica">
@@ -284,7 +282,7 @@
             <ul class="pasos">
               <li><strong>Tempo:</strong> baja la velocidad para aprender pasajes difíciles; verás el porcentaje respecto al original.</li>
               <li><strong>Cuenta:</strong> un compás de clics antes de empezar o en cada vuelta.</li>
-              <li><strong>Metrónomo:</strong> clic durante toda la reproducción.</li>
+              <li><strong>Metrónomo (icono de metrónomo) y Repetir tramo (icono de repetir):</strong> se activan y desactivan con un toque; el metrónomo da clic durante toda la reproducción. El deslizante de abajo elige qué se escucha: solo tu voz, tu voz + coro, coro sin tu voz u orquesta.</li>
               <li><strong>Zoom de la partitura:</strong> los botones − y + de la tarjeta Partitura la hacen más pequeña (caben más compases por línea) o más grande (útil en el móvil). El porcentaje vuelve al 100%.</li>
               <li><strong>Ocultar controles:</strong> el botón junto al título de la pieza esconde Voz, Armadura, Cuenta, Tempo y Coro para dar más espacio a la partitura.</li>
               <li><strong>Atajo:</strong> la barra espaciadora reproduce y detiene.</li>
@@ -327,13 +325,12 @@
               <svg viewBox="0 0 16 16" aria-hidden="true" id="playIcon"><path d="M3 1.5v13l11-6.5z"/></svg>
               <span id="playText">Reproducir</span>
             </button>
-            <button id="btnLoop" class="toggle btn" type="button" aria-pressed="true">Repetir tramo</button>
-            <button id="btnMetro" class="toggle btn" type="button" aria-pressed="false">Metrónomo</button>
-            <div class="seg" role="radiogroup" aria-label="Qué se escucha" id="modes">
-              <button type="button" role="radio" data-mode="tenor" aria-checked="false">Solo tenor</button>
-              <button type="button" role="radio" data-mode="tenorcoro" aria-checked="true">Tenor + coro</button>
-              <button type="button" role="radio" data-mode="sintenor" aria-checked="false">Coro sin tenor</button>
-              <button type="button" role="radio" data-mode="coro" aria-checked="false">Orquesta</button>
+            <button id="btnLoop" class="toggle btn btn-icono" type="button" aria-pressed="true" title="Repetir tramo" aria-label="Repetir tramo"><i data-lucide="repeat"></i></button>
+            <button id="btnMetro" class="toggle btn btn-icono" type="button" aria-pressed="false" title="Metrónomo" aria-label="Metrónomo"><svg class="lucide" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 22h9L14 3h-4z"/><path d="m12 17 4-9"/><path d="M9 22v0"/></svg></button>
+            <div class="modo-desliz" id="modes">
+              <input id="modeSlider" type="range" min="0" max="3" step="1" value="1" aria-label="Qué se escucha" list="modeMarcas">
+              <datalist id="modeMarcas"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option></datalist>
+              <output id="modeLabel" for="modeSlider">Tenor + coro</output>
             </div>
           </div>
         </div>
