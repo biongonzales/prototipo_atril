@@ -29,10 +29,7 @@ function getUsuario() {
   }
 }
 
-/**
- * Preferencias de la interfaz: { tema: 'light'|'dark', zoom: 0.5–2, controlesOcultos: boolean,
- * canto: { margen: 25|50|100, cualquierOctava, sinGuia, latenciaMs } }.
- */
+/** Preferencias de la interfaz: { tema: 'light'|'dark', zoom: 0.5–2, controlesOcultos: boolean }. */
 function getPrefs() {
   const raw = PropertiesService.getUserProperties().getProperty('prefs');
   try {
@@ -49,15 +46,6 @@ function savePrefs(prefs) {
   if (p.tema === 'dark' || p.tema === 'light') actual.tema = p.tema;
   if (isFinite(p.zoom)) actual.zoom = Math.min(2, Math.max(0.5, Number(p.zoom)));
   if (typeof p.controlesOcultos === 'boolean') actual.controlesOcultos = p.controlesOcultos;
-  if (p.canto && typeof p.canto === 'object') {
-    const c = p.canto, margen = Number(c.margen), lat = Number(c.latenciaMs);
-    actual.canto = {
-      margen: [25, 50, 100].indexOf(margen) >= 0 ? margen : 50,
-      cualquierOctava: c.cualquierOctava !== false,
-      sinGuia: c.sinGuia !== false,
-      latenciaMs: isFinite(lat) ? Math.min(500, Math.max(-300, Math.round(lat))) : 0
-    };
-  }
   PropertiesService.getUserProperties().setProperty('prefs', JSON.stringify(actual));
 }
 
