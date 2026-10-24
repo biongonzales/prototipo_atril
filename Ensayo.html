@@ -752,6 +752,7 @@ function mostrarModo() {
   sl.value = i;
   sl.setAttribute('aria-valuetext', MODOS[i].txt || '');
   $('#modeLabel').textContent = MODOS[i].txt || '';
+  document.querySelectorAll('#modeMarcas button').forEach((b) => b.classList.toggle('activa', +b.dataset.i === i));
 }
 function updateLabels() {
   const vn = curVoice().name.replace(/\s*\(canal.*\)/, '');
@@ -794,6 +795,10 @@ $('#btnLoop').addEventListener('click', (e) => { state.loop = !state.loop; e.cur
 $('#btnMetro').addEventListener('click', (e) => { state.metro = !state.metro; e.currentTarget.setAttribute('aria-pressed', state.metro); });
 $('#count').addEventListener('change', (e) => { state.count = e.target.value; });
 $('#modeSlider').addEventListener('input', (e) => { state.mode = MODOS[+e.target.value].id; mostrarModo(); });
+$('#modeMarcas').addEventListener('click', (e) => {   // tocar una marca equivale a deslizar hasta ella
+  const b = e.target.closest('button'); if (!b) return;
+  const sl = $('#modeSlider'); sl.value = b.dataset.i; sl.dispatchEvent(new Event('input', { bubbles: true }));
+});
 $('#bpm').addEventListener('input', (e) => { state.bpm = +e.target.value; setBpmUi(); persist(); });
 $('#coroVol').addEventListener('input', (e) => { state.coroVol = +e.target.value / 100; });
 $('#mFrom').addEventListener('change', setMeasures);

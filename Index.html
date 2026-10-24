@@ -139,7 +139,7 @@
           <div id="msg" class="nota-banner" role="status"></div>
 
           <div class="dash-tarjeta">
-            <div class="dash-tarjeta-head">
+            <div class="dash-tarjeta-head head-partitura">
               <h2 class="dash-titulo">Partitura</h2>
               <div class="partitura-acciones">
                 <button id="btnEditar" class="btn btn-chico" type="button" aria-pressed="false" aria-controls="panel-edicion"><i data-lucide="pencil"></i><span>Editar</span></button>
@@ -325,12 +325,14 @@
               <svg viewBox="0 0 16 16" aria-hidden="true" id="playIcon"><path d="M3 1.5v13l11-6.5z"/></svg>
               <span id="playText">Reproducir</span>
             </button>
-            <button id="btnLoop" class="toggle btn btn-icono" type="button" aria-pressed="true" title="Repetir tramo" aria-label="Repetir tramo"><i data-lucide="repeat"></i></button>
-            <button id="btnMetro" class="toggle btn btn-icono" type="button" aria-pressed="false" title="Metrónomo" aria-label="Metrónomo"><svg class="lucide" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 22h9L14 3h-4z"/><path d="m12 17 4-9"/><path d="M9 22v0"/></svg></button>
+            <button id="btnLoop" class="toggle btn btn-icono" type="button" aria-pressed="true" title="Repetir tramo" aria-label="Repetir tramo"><i data-lucide="repeat"></i><span class="txt-pc">Repetir tramo</span></button>
+            <button id="btnMetro" class="toggle btn btn-icono" type="button" aria-pressed="false" title="Metrónomo" aria-label="Metrónomo"><svg class="lucide" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 22h9L14 3h-4z"/><path d="m12 17 4-9"/><path d="M9 22v0"/></svg><span class="txt-pc">Metrónomo</span></button>
             <div class="modo-desliz" id="modes">
-              <input id="modeSlider" type="range" min="0" max="3" step="1" value="1" aria-label="Qué se escucha" list="modeMarcas">
-              <datalist id="modeMarcas"><option value="0"></option><option value="1"></option><option value="2"></option><option value="3"></option></datalist>
-              <output id="modeLabel" for="modeSlider">Tenor + coro</output>
+              <div class="modo-cab"><span class="modo-tit">Se escucha</span><output id="modeLabel" for="modeSlider">Tenor + coro</output></div>
+              <input id="modeSlider" type="range" min="0" max="3" step="1" value="1" aria-label="Qué se escucha">
+              <div class="modo-marcas" id="modeMarcas">
+                <button type="button" data-i="0" tabindex="-1">Solo</button><button type="button" data-i="1" tabindex="-1">Con coro</button><button type="button" data-i="2" tabindex="-1">Sin voz</button><button type="button" data-i="3" tabindex="-1">Orquesta</button>
+              </div>
             </div>
           </div>
         </div>
