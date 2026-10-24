@@ -52,7 +52,6 @@ function filaItem(it) {
   flecha.addEventListener('click', () => { const abierta = tr.classList.toggle('abierta'); flecha.setAttribute('aria-expanded', abierta); });
   const linea = el('div', 'titulo-linea'); linea.append(flecha, el('span', 'titulo-texto', it.titulo));
   tit.appendChild(linea);
-  if (m && m.version > 0) tit.appendChild(el('div', 'tabla-sub', 'Versión ' + m.version + ' de ' + (m.raiz || it.titulo)));   // las versiones son filas propias
   const det = el('dl', 'tabla-detalle');
   [['Compositor', m && m.compositor], ['Arreglo', m && m.arreglo], ['Compás', m && m.compas], ['Tempo', m && m.bpm ? '♩ = ' + m.bpm : ''],
     ['Compases', m && m.compases], ['Voces', m && m.voces && m.voces.length ? m.voces.join(', ') : '']].forEach(([k, v]) => {
