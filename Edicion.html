@@ -96,7 +96,14 @@ function escribirMidi(raw, ov, extra, totalBeats, warps) {
     const borrar = new Set();
     const nuevo = (e) => { e.i = evs.length; evs.push(e); return e; };
     t.notes.forEach((n) => {
-      const o = ov[ti + ':' + n.on];
+      let o = ov[ti + ':' + n.on];
+      if (warps.length && n.ch !== 9 && !(o && o.del)) {
+        // Con cambios de tiempo se escribe cada nota tal como se ve (en la cuadrícula de semicorcheas): así lo guardado
+        // es idéntico a lo mostrado y, al reabrirlo, los tiempos no cambian.
+        const q = (x) => Math.round(x * 4) / 4, s0 = q(n.start / ppq);
+        let e0 = q(n.end / ppq); if (e0 <= s0) e0 = s0 + 0.25;
+        o = Object.assign({ start: tiempo(s0, false, warps), end: tiempo(e0, true, warps) }, o || {});
+      }
       if (!o) return;
       if (o.del) {
         borrar.add(n.on); if (n.off >= 0) borrar.add(n.off); if (n.letraEv >= 0) borrar.add(n.letraEv);
