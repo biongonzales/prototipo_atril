@@ -7,7 +7,7 @@ const EPS = 1e-6;
 /* ------------------------------------------------------------------ estado */
 const state = {
   song: null, voiceIdx: 0, mode: 'tenorcoro', loop: true, metro: false, count: 'start',
-  bpm: 84, coroVol: 0.7, sel: null, stage: 0, keySf: 0, songKey: '', saved: [], restored: false
+  bpm: 84, coroVol: 0.7, sel: null, stage: 0, keySf: 0, songKey: '', saved: [], restored: false, zoom: 1
 };
 const ui = { pieces: [], beams: [], mrects: [], nowIdx: -1, nowSys: -1, lastW: 0 };
 
@@ -130,7 +130,7 @@ function sampleSong() {
   const voices = [['Soprano', S], ['Contralto', A], ['Tenor', T], ['Bajo', B]].map(([name, arr]) => {
     const notes = mk(arr); return { name, notes, line: monoLine(notes), med: median(notes.map((n) => n.midi)) };
   });
-  return finishSong({ title: 'Ejemplo de prueba', voices, ts: { num: 4, den: 4 }, bpm: 84, sf: 1, hasKey: true, sample: true });
+  return finishSong({ title: 'EJEMPLO DE PRUEBA', voices, ts: { num: 4, den: 4 }, bpm: 84, sf: 1, hasKey: true, sample: true });
 }
 
 /* ------------------------------------------------------------ notación */
@@ -224,8 +224,11 @@ function renderScore() {
   const cfg = CLEFS[clefFor(curVoice())];
   const sf = state.keySf, keyN = Math.abs(sf);
   const measures = buildMeasures(curLine(), mb, song.nMeas);
-  const W = Math.max(280, host.clientWidth || 600);
-  ui.lastW = W;
+  // Zoom: el pentagrama se compone con un ancho lógico W = ancho disponible / zoom y el SVG se muestra a W * zoom.
+  // Con zoom < 1 caben más compases por línea; con zoom > 1 se ve más grande y, si no cabe, se desplaza en horizontal.
+  const hostW = host.clientWidth || 600, z = state.zoom;
+  const W = Math.max(280, hostW / z);
+  ui.lastW = hostW;
   const padL = 6, avail = W - padL - 8;
   const firstExtra = (mi) => 50 + (keyN ? keyN * 10 + 8 : 0) + (mi === 0 ? 30 : 0);
   const base = measures.map((it) => Math.max(140, 44 + it.length * 30));
@@ -242,6 +245,9 @@ function renderScore() {
   renderer.resize(W, H);
   const ctx = renderer.getContext();
   const svg = host.querySelector('svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.style.width = (W * z) + 'px';
+  svg.style.height = (H * z) + 'px';
   const NS = 'http://www.w3.org/2000/svg';
   const hitLayer = document.createElementNS(NS, 'g');
   svg.insertBefore(hitLayer, svg.firstChild);
@@ -338,15 +344,24 @@ function renderScore() {
   applySelection();
 }
 
+// Qué nota o compás hay bajo el puntero. Se mira toda la pila de elementos porque las líneas del pentagrama
+// quedan por encima del área clicable del compás y tapaban el clic.
+function ubicar(e) {
+  let pn = null, mr = null;
+  for (const x of document.elementsFromPoint(e.clientX, e.clientY)) {
+    if (!pn && x.closest) { const g = x.closest('.pn'); if (g && g.hasAttribute('data-note')) pn = g; }
+    if (!mr && x.classList && x.classList.contains('mrect')) mr = x;
+  }
+  return { pn, mr };
+}
 function onScoreClick(e) {
   if (!state.song) return;
-  const pn = e.target.closest('.pn');
-  if (pn && pn.hasAttribute('data-note')) {
+  const { pn, mr } = ubicar(e);
+  if (pn) {
     const n = curLine()[+pn.getAttribute('data-note')];
     if (n) pick({ a: n.start, b: n.end });
     return;
   }
-  const mr = e.target.closest('.mrect');
   if (mr) { const m = +mr.getAttribute('data-m'); pick({ a: m * state.song.mb, b: (m + 1) * state.song.mb }); }
 }
 function pick(span) {
@@ -642,9 +657,8 @@ function updateLabels() {
   b[1].textContent = vn + ' + coro';
   b[2].textContent = 'Coro sin ' + vn.toLowerCase();
   b[3].textContent = 'Orquesta';
-  const song = state.song;
-  $('#title').textContent = 'Ensayo de ' + vn;
-  $('#meta').textContent = 'Pieza: ' + song.title;
+  $('#title').textContent = state.song.title;
+  if (window.Ensayo && window.refrescarTituloTopbar) window.refrescarTituloTopbar();   // la topbar muestra «Ensayo · voz»
 }
 function setBpmUi() {
   $('#bpm').value = state.bpm;
@@ -685,7 +699,49 @@ $('#bpm').addEventListener('input', (e) => { state.bpm = +e.target.value; setBpm
 $('#coroVol').addEventListener('input', (e) => { state.coroVol = +e.target.value / 100; });
 $('#mFrom').addEventListener('change', setMeasures);
 $('#mTo').addEventListener('change', setMeasures);
-$('#btnClear').addEventListener('click', () => { state.sel = null; state.stage = 0; applySelection(); });
+function limpiarSeleccion() { if (!state.sel && !state.stage) return; state.sel = null; state.stage = 0; applySelection(); }
+$('#btnClear').addEventListener('click', limpiarSeleccion);
+// Un clic fuera de una nota o compás (y fuera de los controles) deja el ensayo sin tramo; Esc hace lo mismo.
+document.addEventListener('click', (e) => {
+  if (!state.sel || $('#panel-ensayo').classList.contains('oculto')) return;
+  if (e.target.closest('button, input, select, label, a, .bar, .modal, .swal2-container')) return;
+  const { pn, mr } = ubicar(e);
+  if (!pn && !mr) limpiarSeleccion();
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#panel-ensayo').classList.contains('oculto')) limpiarSeleccion(); });
+
+/* ------------------------------------------------- zoom, controles y preferencias */
+const ZOOMS = [0.5, 0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+let prefsPend = null, prefsTimer = 0;
+// Se guardan en el servidor (UserProperties); los cambios seguidos se agrupan en una sola llamada.
+function guardarPrefs(parcial) {
+  prefsPend = Object.assign(prefsPend || {}, parcial);
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => { const p = prefsPend; prefsPend = null; ejecutar('savePrefs', p).catch(() => { /* se reintenta en el próximo cambio */ }); }, 500);
+}
+function setZoom(valor, guardar) {
+  const i = ZOOMS.reduce((mejor, v, k) => (Math.abs(v - valor) < Math.abs(ZOOMS[mejor] - valor) ? k : mejor), 0);
+  state.zoom = ZOOMS[i];
+  $('#zoomValor').textContent = Math.round(state.zoom * 100) + '%';
+  $('#zoomMenos').disabled = i === 0;
+  $('#zoomMas').disabled = i === ZOOMS.length - 1;
+  renderScore();
+  if (guardar) guardarPrefs({ zoom: state.zoom });
+}
+const pasoZoom = (d) => setZoom(ZOOMS[Math.min(ZOOMS.length - 1, Math.max(0, ZOOMS.indexOf(state.zoom) + d))], true);
+function setControles(visibles, guardar) {
+  $('#ensayo-controles').classList.toggle('oculto', !visibles);
+  const b = $('#btnControles'), texto = visibles ? 'Ocultar controles' : 'Mostrar controles';
+  b.setAttribute('aria-expanded', visibles); b.setAttribute('aria-label', texto); b.title = texto;
+  const i = document.createElement('i'); i.setAttribute('data-lucide', visibles ? 'chevron-up' : 'chevron-down');
+  const t = document.createElement('span'); t.textContent = texto;
+  b.innerHTML = ''; b.append(i, t); refrescarIconos();
+  if (guardar) guardarPrefs({ controlesOcultos: !visibles });
+}
+$('#zoomMenos').addEventListener('click', () => pasoZoom(-1));
+$('#zoomMas').addEventListener('click', () => pasoZoom(1));
+$('#zoomValor').addEventListener('click', () => setZoom(1, true));
+$('#btnControles').addEventListener('click', () => setControles($('#ensayo-controles').classList.contains('oculto'), true));
 $('#btnSave').addEventListener('click', () => {
   if (!state.sel) return;
   if (!state.saved.some((t) => Math.abs(t.a - state.sel.a) < EPS && Math.abs(t.b - state.sel.b) < EPS)) state.saved.push({ a: state.sel.a, b: state.sel.b });
@@ -716,8 +772,15 @@ function boot() {
       return { compas: `${s.ts.num}/${s.ts.den}`, bpm: s.bpm, compases: s.nMeas, voces: s.voices.map((v) => v.name) };
     },
     // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
-    cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave)
+    cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave),
+    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, '')
   };
+  if (window.refrescarTituloTopbar) window.refrescarTituloTopbar();
+  ejecutar('getPrefs').then((p) => {
+    if (!p) return;
+    if (isFinite(p.zoom) && p.zoom !== state.zoom) setZoom(p.zoom, false);
+    if (typeof p.controlesOcultos === 'boolean') setControles(!p.controlesOcultos, false);
+  }).catch(() => { /* sin preferencias guardadas: se usan las predeterminadas */ });
 }
 if (document.readyState === 'loading') addEventListener('DOMContentLoaded', boot); else boot();
 })();

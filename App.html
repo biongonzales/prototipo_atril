@@ -113,8 +113,18 @@
 
   // Una sola lista: cada panel necesita <section id="panel-xxx"> y <button id="btn-xxx">.
   const PANELES = ['biblioteca', 'ensayo', 'guia'];
+  const TITULOS_PANEL = { biblioteca: 'Biblioteca', guia: 'Guía de uso' };
+  let panelActual = 'ensayo';
+
+  // La topbar nombra la vista abierta; en el ensayo añade la voz que se practica («Ensayo · Tenor»).
+  function refrescarTituloTopbar() {
+    const t = panelActual === 'ensayo' ? (window.Ensayo ? window.Ensayo.tituloTopbar() : 'Ensayo') : TITULOS_PANEL[panelActual];
+    $('#titulo-proyecto').textContent = t;
+  }
 
   function mostrarPanel(nombre) {
+    panelActual = nombre;
+    refrescarTituloTopbar();
     PANELES.forEach(function (p) {
       $('#panel-' + p).classList.toggle('oculto', p !== nombre);
       const btn = $('#btn-' + p);

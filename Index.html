@@ -40,7 +40,7 @@
       <header class="topbar">
         <div class="topbar-izquierda">
           <button id="btn-toggle-sidebar" class="topbar-icono-btn" title="Colapsar menú" aria-label="Colapsar menú"><i data-lucide="menu"></i></button>
-          <span id="titulo-proyecto" class="topbar-titulo">Ensayo Coral</span>
+          <span id="titulo-proyecto" class="topbar-titulo">Ensayo</span>
         </div>
         <div class="topbar-derecha">
           <button id="btn-tema-topbar" class="topbar-icono-btn" title="Cambiar a modo oscuro" aria-label="Cambiar tema"><i data-lucide="moon"></i></button>
@@ -103,10 +103,11 @@
           <div class="dash-tarjeta">
             <div class="ensayo-cabecera">
               <div class="ensayo-cabecera-texto">
-                <h1 id="title">Ensayo de Tenor</h1>
-                <p class="subtitulo" id="meta">Cargando ejemplo…</p>
+                <h1 id="title">Cargando…</h1>
               </div>
-              <div class="ensayo-herramientas">
+              <button id="btnControles" class="btn btn-chico btn-controles" type="button" aria-expanded="true" aria-controls="ensayo-controles" aria-label="Ocultar controles" title="Ocultar controles"><i data-lucide="chevron-up"></i><span>Ocultar controles</span></button>
+            </div>
+            <div class="ensayo-controles" id="ensayo-controles">
                 <label class="campo">Voz a practicar
                   <select id="voice" aria-label="Voz a practicar"></select>
                 </label>
@@ -131,7 +132,6 @@
                     <input id="coroVol" type="range" min="0" max="100" value="70" aria-label="Volumen del coro">
                   </span>
                 </label>
-              </div>
             </div>
           </div>
 
@@ -140,12 +140,16 @@
           <div class="dash-tarjeta">
             <div class="dash-tarjeta-head">
               <h2 class="dash-titulo">Partitura</h2>
-              <span class="dash-subtitulo">Toca una nota o un compás para elegir un tramo</span>
+              <div class="zoom-ctl" role="group" aria-label="Tamaño de la partitura">
+                <button id="zoomMenos" type="button" aria-label="Reducir partitura" title="Reducir"><i data-lucide="minus"></i></button>
+                <button id="zoomValor" type="button" class="zoom-valor mono" title="Volver al 100%">100%</button>
+                <button id="zoomMas" type="button" aria-label="Ampliar partitura" title="Ampliar"><i data-lucide="plus"></i></button>
+              </div>
             </div>
             <div class="paper">
               <div id="score"></div>
             </div>
-            <p class="ayuda-score">Toca una nota o un compás para marcar el inicio del tramo, y toca otra para marcar el final. Un tercer toque empieza un tramo nuevo.</p>
+            <p class="ayuda-score">Toca una nota o un compás para marcar el inicio del tramo, y toca otra para marcar el final. Un tercer toque empieza un tramo nuevo. Para quitar el tramo, toca fuera de la partitura o pulsa Esc.</p>
           </div>
 
           <div class="dash-tarjeta" aria-label="Tramo de práctica">
@@ -200,6 +204,8 @@
               <li><strong>Tempo:</strong> baja la velocidad para aprender pasajes difíciles; verás el porcentaje respecto al original.</li>
               <li><strong>Cuenta:</strong> un compás de clics antes de empezar o en cada vuelta.</li>
               <li><strong>Metrónomo:</strong> clic durante toda la reproducción.</li>
+              <li><strong>Zoom de la partitura:</strong> los botones − y + de la tarjeta Partitura la hacen más pequeña (caben más compases por línea) o más grande (útil en el móvil). El porcentaje vuelve al 100%.</li>
+              <li><strong>Ocultar controles:</strong> el botón junto al título de la pieza esconde Voz, Armadura, Cuenta, Tempo y Coro para dar más espacio a la partitura.</li>
               <li><strong>Atajo:</strong> la barra espaciadora reproduce y detiene.</li>
             </ul>
           </div>

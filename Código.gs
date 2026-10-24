@@ -29,7 +29,7 @@ function getUsuario() {
   }
 }
 
-/** Preferencias de la interfaz. Hoy solo el tema: { tema: 'light' | 'dark' }. */
+/** Preferencias de la interfaz: { tema: 'light'|'dark', zoom: 0.5–2, controlesOcultos: boolean }. */
 function getPrefs() {
   const raw = PropertiesService.getUserProperties().getProperty('prefs');
   try {
@@ -39,9 +39,14 @@ function getPrefs() {
   }
 }
 
+/** Actualiza solo las preferencias recibidas y conserva el resto. */
 function savePrefs(prefs) {
-  const tema = prefs && prefs.tema === 'dark' ? 'dark' : 'light';
-  PropertiesService.getUserProperties().setProperty('prefs', JSON.stringify({ tema: tema }));
+  const p = prefs || {};
+  const actual = getPrefs();
+  if (p.tema === 'dark' || p.tema === 'light') actual.tema = p.tema;
+  if (isFinite(p.zoom)) actual.zoom = Math.min(2, Math.max(0.5, Number(p.zoom)));
+  if (typeof p.controlesOcultos === 'boolean') actual.controlesOcultos = p.controlesOcultos;
+  PropertiesService.getUserProperties().setProperty('prefs', JSON.stringify(actual));
 }
 
 /* ---------------------------------------------------------------- Biblioteca de MIDIs */

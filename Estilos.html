@@ -340,6 +340,21 @@
   .ensayo-cabecera-texto { min-width: 0; flex: 1 1 260px; }
   .ensayo-herramientas { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 
+  /* Cabecera del ensayo: título de la pieza + botón para ocultar los controles, que van debajo. */
+  .panel-ensayo .ensayo-cabecera { flex-wrap: nowrap; align-items: center; }
+  .panel-ensayo .ensayo-cabecera-texto { flex: 1 1 auto; }
+  .panel-ensayo h1 { overflow-wrap: anywhere; }
+  .btn-controles { flex-shrink: 0; }
+  .ensayo-controles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 16px;
+    align-items: flex-end;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--slate-200);
+  }
+
   .campo {
     display: flex;
     flex-direction: column;
@@ -370,7 +385,27 @@
   /* ---------- Partitura ---------- */
   .paper { background: var(--superficie); border: 1px solid var(--slate-200); border-radius: 10px; padding: 14px 8px 6px; }
   #score { width: 100%; min-height: 160px; overflow-x: auto; }
-  #score svg { display: block; max-width: 100%; height: auto; fill: var(--ink); stroke: var(--ink); }
+  /* El ancho y el alto del SVG los fija el JS según el zoom; con zoom alto puede superar el ancho y se desplaza. */
+  #score svg { display: block; max-width: none; fill: var(--ink); stroke: var(--ink); }
+
+  .zoom-ctl { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--slate-300); border-radius: 999px; background: var(--superficie); }
+  .zoom-ctl button {
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    border: none;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--slate-800);
+    font-size: 1rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .zoom-ctl button:hover:not(:disabled) { background: var(--slate-100); }
+  .zoom-ctl button:disabled { opacity: .35; cursor: default; }
+  .zoom-ctl .zoom-valor { min-width: 56px; padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--slate-900); }
   .ayuda-score { margin-top: 10px; font-size: 13px; color: var(--slate-500); }
 
   #score .vf-stave { fill: var(--ink); stroke: var(--ink); }
@@ -608,9 +643,11 @@
     h1 { font-size: 22px; line-height: 28px; }
     .topbar-titulo { font-size: 16px; }
     .dash-tarjeta { padding: 14px; }
-    .ensayo-herramientas { width: 100%; }
-    .ensayo-herramientas .campo { flex: 1 1 140px; min-width: 0; }
-    .ensayo-herramientas select { width: 100%; }
+    .btn-controles span { display: none; }
+    .btn-controles { padding: 5px 10px; }
+    .zoom-ctl button { min-width: 38px; height: 38px; }
+    .ensayo-controles .campo { flex: 1 1 140px; min-width: 0; }
+    .ensayo-controles select { width: 100%; }
     .campo-slider input[type="range"] { flex: 1; width: auto; min-width: 60px; }
     .campo-slider .mono { min-width: 0; white-space: nowrap; }
     .play { flex: 1 1 100%; }
