@@ -44,8 +44,21 @@ function celdaMensaje(texto, accion) {
 
 function filaItem(it) {
   const tr = el('tr'), m = it.meta;
-  const tit = el('td', 'tabla-col-titulo', it.titulo);
+  const tit = el('td', 'tabla-col-titulo');
+  // En el móvil las columnas de datos se ocultan: la flecha despliega el detalle debajo del título.
+  const flecha = el('button', 'btn-expandir');
+  flecha.type = 'button'; flecha.setAttribute('aria-expanded', 'false'); flecha.setAttribute('aria-label', 'Ver más datos de ' + it.titulo); flecha.title = 'Ver más';
+  flecha.innerHTML = '<i data-lucide="chevron-down"></i>';
+  flecha.addEventListener('click', () => { const abierta = tr.classList.toggle('abierta'); flecha.setAttribute('aria-expanded', abierta); });
+  const linea = el('div', 'titulo-linea'); linea.append(flecha, el('span', 'titulo-texto', it.titulo));
+  tit.appendChild(linea);
   if (m && m.version > 0) tit.appendChild(el('div', 'tabla-sub', 'Versión ' + m.version + ' de ' + (m.raiz || it.titulo)));   // las versiones son filas propias
+  const det = el('dl', 'tabla-detalle');
+  [['Compositor', m && m.compositor], ['Arreglo', m && m.arreglo], ['Compás', m && m.compas], ['Tempo', m && m.bpm ? '♩ = ' + m.bpm : ''],
+    ['Compases', m && m.compases], ['Voces', m && m.voces && m.voces.length ? m.voces.join(', ') : '']].forEach(([k, v]) => {
+    det.appendChild(el('dt', '', k)); det.appendChild(el('dd', '', v ? String(v) : '–'));
+  });
+  tit.appendChild(det);
   tr.appendChild(tit);
   tr.appendChild(el('td', 'tabla-texto', m && m.compositor ? m.compositor : '–'));
   tr.appendChild(el('td', 'tabla-texto', m && m.arreglo ? m.arreglo : '–'));
@@ -55,13 +68,12 @@ function filaItem(it) {
   const voces = el('td', '', m && m.voces ? String(m.voces.length) : '–');
   if (m && m.voces && m.voces.length) voces.title = m.voces.join(', ');
   tr.appendChild(voces);
-  tr.appendChild(el('td', '', fechaCorta(it.fecha)));
   const acc = el('td', 'tabla-col-acciones');
   const b = el('button', 'btn btn-primario btn-chico');
   b.type = 'button'; b.title = 'Ensayar ' + it.titulo; b.setAttribute('aria-label', 'Ensayar ' + it.titulo);
   // Lucide solo dibuja los iconos que ya están en la página: la fila aún no lo está, así que renderTabla()
   // llama a refrescarIconos() una vez cuando todas las filas están insertadas.
-  const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, ' Ensayo'); };
+  const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, el('span', 'txt-pc', 'Ensayo')); };
   etiqueta();
   b.addEventListener('click', async () => {
     if (window.Edicion && !(await window.Edicion.confirmarDescarte())) return;   // hay cambios sin guardar en el Ensayo
@@ -76,7 +88,7 @@ function filaItem(it) {
   });
   const ed = el('button', 'btn btn-chico');
   ed.type = 'button'; ed.title = 'Editar compositor y arreglo de ' + it.titulo; ed.setAttribute('aria-label', 'Editar ' + it.titulo);
-  ed.innerHTML = '<i data-lucide="pencil"></i> Editar';
+  ed.innerHTML = '<i data-lucide="pencil"></i><span class="txt-pc">Editar</span>';
   ed.addEventListener('click', () => editarDatos(it, ed));
   const del = el('button', 'btn btn-chico btn-eliminar');
   del.type = 'button'; del.title = 'Eliminar ' + it.titulo; del.setAttribute('aria-label', 'Eliminar ' + it.titulo);
@@ -90,16 +102,23 @@ function filaItem(it) {
 async function editarDatos(it, boton) {
   const cs = getComputedStyle(document.documentElement), m = it.meta || {};
   const r = await Swal.fire({
-    title: 'Editar datos', html: '<p class="swal-pieza"></p><label class="swal-campo">Compositor<input id="sw-compositor" class="swal2-input" maxlength="80" autocomplete="off"></label><label class="swal-campo">Arreglo<input id="sw-arreglo" class="swal2-input" maxlength="80" autocomplete="off"></label>',
+    title: 'Editar datos', html: '<label class="swal-campo">Título<input id="sw-titulo" class="swal2-input" maxlength="80" autocomplete="off" spellcheck="false"></label><label class="swal-campo">Compositor<input id="sw-compositor" class="swal2-input" maxlength="80" autocomplete="off"></label><label class="swal-campo">Arreglo<input id="sw-arreglo" class="swal2-input" maxlength="80" autocomplete="off"></label>',
     showCancelButton: true, confirmButtonText: 'Guardar', cancelButtonText: 'Cancelar', reverseButtons: true,
     confirmButtonColor: '#0f766e', cancelButtonColor: '#64748b',
     background: cs.getPropertyValue('--superficie').trim(), color: cs.getPropertyValue('--slate-900').trim(),
     didOpen: (p) => {
-      p.querySelector('.swal-pieza').textContent = it.titulo;
+      const tit = p.querySelector('#sw-titulo');
+      tit.value = it.titulo;
+      tit.addEventListener('input', () => { const pos = tit.selectionStart, antes = tit.value.length; tit.value = tit.value.toUpperCase().replace(NO_PERMITIDOS, ''); const q = Math.max(0, pos - (antes - tit.value.length)); tit.setSelectionRange(q, q); Swal.resetValidationMessage(); });
       p.querySelector('#sw-compositor').value = m.compositor || ''; p.querySelector('#sw-arreglo').value = m.arreglo || '';
-      p.querySelector('#sw-compositor').focus();
+      tit.focus(); tit.select();
     },
-    preConfirm: () => ({ compositor: document.getElementById('sw-compositor').value, arreglo: document.getElementById('sw-arreglo').value })
+    preConfirm: () => {
+      const titulo = document.getElementById('sw-titulo').value.replace(/\s+/g, ' ').trim();
+      if (!titulo) { Swal.showValidationMessage('El título no puede estar vacío.'); return false; }
+      if (titulo !== it.titulo && est.items.some((x) => x.id !== it.id && x.titulo.toUpperCase() === titulo)) { Swal.showValidationMessage('Ya existe un MIDI con el título «' + titulo + '». Elige otro.'); return false; }
+      return { titulo, compositor: document.getElementById('sw-compositor').value, arreglo: document.getElementById('sw-arreglo').value };
+    }
   });
   if (!r.isConfirmed) return;
   boton.disabled = true;
@@ -107,6 +126,7 @@ async function editarDatos(it, boton) {
     const nuevo = await ejecutar('actualizarDatos', it.id, r.value);
     const i = est.items.findIndex((x) => x.id === it.id);
     if (i >= 0) est.items[i] = nuevo;
+    if (nuevo.titulo !== it.titulo) est.items = await ejecutar('listarMidis');   // las versiones también cambian de nombre
     renderTabla();
     toastExito('Datos actualizados');
   } catch (e) {
@@ -130,6 +150,7 @@ async function eliminar(it, boton) {
   try {
     await ejecutar('eliminarMidi', it.id);
     est.items = est.items.filter((x) => x.id !== it.id);
+    if (window.Ensayo && window.Ensayo.claveActual() === 'lib|' + it.id) window.Ensayo.vaciar();   // la pieza abierta ya no existe
     renderTabla();
     toastExito('«' + it.titulo + '» eliminado');
   } catch (e) {

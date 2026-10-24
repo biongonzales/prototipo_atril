@@ -88,7 +88,6 @@
                     <th>Tempo</th>
                     <th>Compases</th>
                     <th>Voces</th>
-                    <th>Subido</th>
                     <th class="tabla-col-acciones">Acciones</th>
                   </tr>
                 </thead>
@@ -100,6 +99,13 @@
 
         <!-- ================= Ensayo ================= -->
         <section id="panel-ensayo" class="panel-sin-marco panel-ensayo oculto">
+
+          <div id="ensayo-vacio" class="ensayo-vacio" role="status">
+            <i data-lucide="list-music"></i>
+            <h2>Todavía no hay una pieza abierta</h2>
+            <p>Escoja una pieza musical de la Biblioteca para ensayar.</p>
+            <button id="btnIrBiblioteca" class="btn btn-primario" type="button"><i data-lucide="list-music"></i> Ir a la Biblioteca</button>
+          </div>
 
           <div class="dash-tarjeta">
             <div class="ensayo-cabecera">

@@ -131,7 +131,9 @@ function actualizarDatos(id, datos) {
   const lock = LockService.getUserLock();
   lock.waitLock(20000);
   try {
-    const archivo = archivoEnMidis_(id).archivo;
+    const o = archivoEnMidis_(id);
+    const archivo = o.archivo;
+    if (d.titulo !== undefined && d.titulo !== null) renombrar_(o, String(d.titulo).replace(/\s+/g, ' ').trim());
     let meta = null;
     try { meta = JSON.parse(archivo.getDescription() || 'null'); } catch (e) { meta = null; }
     meta = meta || {};
@@ -140,6 +142,38 @@ function actualizarDatos(id, datos) {
     archivo.setDescription(JSON.stringify(meta));
     return itemMidi_(archivo);
   } finally { lock.releaseLock(); }
+}
+
+// Cambia el título de una pieza. Si es el original (no una versión), sus versiones «TÍTULO Vn» se renombran con él
+// y siguen colgando de la misma pieza. Falla, sin cambiar nada, si el título no es válido o ya existe.
+function renombrar_(o, nuevo) {
+  const archivo = o.archivo, rv = raizYVersion_(archivo), viejo = rv.titulo;
+  if (nuevo === viejo) return;
+  if (!TITULO_VALIDO.test(nuevo)) throw new Error('El título debe estar en MAYÚSCULAS (letras, números y - _ ( ) . , \' # &) y tener hasta 80 caracteres.');
+  const cambios = [{ f: archivo, nombre: nuevo, meta: null }];
+  if (rv.version === 0) {
+    const re = new RegExp('^' + viejo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' V(\\d+)$');
+    const it = o.carpeta.getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      if (f.getId() === archivo.getId() || !/\.midi?$/i.test(f.getName())) continue;
+      const r = raizYVersion_(f);
+      if (r.raiz !== viejo || r.version < 1) continue;
+      const m = re.exec(r.titulo);
+      const nom = m ? nombreVersion_(nuevo, m[1]) : r.titulo;
+      cambios.push({ f: f, nombre: nom, meta: r.meta });
+    }
+  }
+  cambios.forEach(function (c) {   // primero se comprueba todo
+    const ya = o.carpeta.getFilesByName(c.nombre + '.mid');
+    while (ya.hasNext()) {
+      if (ya.next().getId() !== c.f.getId()) throw new Error('Ya existe un MIDI con el título «' + c.nombre + '».');
+    }
+  });
+  cambios.forEach(function (c) {
+    c.f.setName(c.nombre + '.mid');
+    if (c.meta) { c.meta.raiz = nuevo; c.f.setDescription(JSON.stringify(c.meta)); }
+  });
 }
 
 /**

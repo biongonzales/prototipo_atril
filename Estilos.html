@@ -542,6 +542,36 @@
   .tabla-col-titulo { font-weight: 600; color: var(--slate-900); }
   .tabla-sub { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--slate-500); }
   .tabla-col-acciones { text-align: right !important; white-space: nowrap; }
+  .titulo-linea { display: flex; align-items: center; gap: 6px; }
+  .btn-expandir, .tabla-detalle { display: none; }
+  .btn-expandir { border: none; background: transparent; color: var(--slate-500); width: 28px; height: 28px; padding: 0; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center; flex: none; }
+  .btn-expandir svg { width: 18px; height: 18px; transition: transform .2s ease; }
+  tr.abierta .btn-expandir svg { transform: rotate(180deg); }
+  .tabla-detalle { margin: 8px 0 2px; font-weight: 400; font-size: 13px; grid-template-columns: max-content 1fr; gap: 4px 12px; color: var(--slate-800); }
+  .tabla-detalle dt { color: var(--slate-500); }
+  .tabla-detalle dd { margin: 0; overflow-wrap: anywhere; }
+  .ensayo-vacio { display: none; }
+  .panel-ensayo.sin-pieza > :not(.ensayo-vacio) { display: none !important; }
+  .panel-ensayo.sin-pieza .ensayo-vacio {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center;
+    min-height: 50vh; padding: 40px 20px; color: var(--slate-500);
+  }
+  .ensayo-vacio > svg { width: 44px; height: 44px; }
+  .ensayo-vacio h2 { margin: 0; font-size: 18px; color: var(--slate-900); }
+  .ensayo-vacio p { margin: 0; max-width: 360px; font-size: 15px; }
+  .ensayo-vacio .btn { margin-top: 8px; }
+  /* Biblioteca en el móvil: título y acciones (solo iconos); lo demás se ve con la flecha. */
+  @media (max-width: 640px) {
+    .tabla-datos { min-width: 0; }
+    .tabla-datos th:nth-child(n+2):not(.tabla-col-acciones), .tabla-datos td:nth-child(n+2):not(.tabla-col-acciones) { display: none; }
+    .tabla-datos th, .tabla-datos td { padding: 10px 10px; }
+    .btn-expandir { display: inline-flex; }
+    tr.abierta .tabla-detalle { display: grid; }
+    .tabla-col-acciones .txt-pc { display: none; }
+    .tabla-col-acciones .btn { padding: 0; width: 36px; min-height: 36px; justify-content: center; }
+    .tabla-col-acciones .btn + .btn { margin-left: 2px; }
+    .tabla-col-titulo { white-space: normal; overflow-wrap: anywhere; }
+  }
   .btn-eliminar { color: var(--rojo); }
   .btn-eliminar:hover:not(:disabled) { background: color-mix(in srgb, var(--rojo) 12%, transparent); border-color: var(--rojo); }
   .tabla-mensaje { text-align: center; padding: 40px 16px !important; color: var(--slate-500); white-space: normal; }

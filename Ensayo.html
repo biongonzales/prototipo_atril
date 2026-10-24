@@ -773,6 +773,7 @@ function loadSong(song, key) {
   stopPlay(); flushSave();
   if (hooks.alCargar) hooks.alCargar(song, key);
   state.song = song; state.songKey = key; state.sel = null; state.stage = 0;
+  state.sinPieza = false;
   state.voiceIdx = Math.max(0, song.voices.findIndex((v) => clefFor(v) === 't8' && /tenor/i.test(v.name)));
   if (state.voiceIdx < 0 || !/tenor/i.test(song.voices[state.voiceIdx].name)) {
     const sorted = song.voices.map((v, i) => ({ i, med: v.med })).sort((a, b) => a.med - b.med);
@@ -783,7 +784,14 @@ function loadSong(song, key) {
   fillVoices(); fillKeys(); updateLabels(); setBpmUi(); renderSaved();
   $('#msg').textContent = '';
   renderScore();
+  aplicarVacio();
   restore();   // lee del servidor tramos, tempo y voz de esta canción y refresca la interfaz
+}
+// Sin pieza abierta, el ensayo se ve en blanco con un aviso (por dentro queda cargado el ejemplo para que todo siga funcionando).
+function aplicarVacio() {
+  $('#panel-ensayo').classList.toggle('sin-pieza', !!state.sinPieza);
+  $('#barra-reproduccion').classList.toggle('oculto', !!state.sinPieza || $('#panel-ensayo').classList.contains('oculto'));
+  if (window.refrescarTituloTopbar) window.refrescarTituloTopbar();
 }
 function showError(e) { $('#msg').textContent = e.message || String(e); }
 // Los MIDIs entran solo por la Biblioteca. Se evita que soltar un archivo fuera de ella haga que el navegador lo abra.
@@ -866,7 +874,15 @@ new ResizeObserver(() => {
 function boot() {
   if (!window.Vex) { showError(new Error('No se pudo cargar la librería de notación. Revisa tu conexión y recarga.')); return; }
   loadSong(sampleSong(), 'ejemplo');
+  state.sinPieza = true; aplicarVacio();
+  $('#btnIrBiblioteca').addEventListener('click', () => { if (window.mostrarPanel) window.mostrarPanel('biblioteca'); });
   window.Ensayo = {
+    sinPieza: () => !!state.sinPieza,
+    claveActual: () => state.songKey,
+    // Vuelve al ensayo en blanco (por ejemplo, si se elimina la pieza abierta).
+    vaciar: () => { loadSong(sampleSong(), 'ejemplo'); state.sinPieza = true; aplicarVacio(); },
+    // Solo para pruebas: abre el ejemplo interno como si fuera una pieza.
+    mostrarEjemplo: () => { state.sinPieza = false; aplicarVacio(); },
     detener: stopPlay,
     limpiarSeleccion: () => limpiarSeleccion(),
     // Al volver a la vista el contenedor pudo cambiar de ancho mientras estaba oculto.
@@ -884,7 +900,7 @@ function boot() {
       if (compases > song.nMeas && compases <= 2000) { song.nMeas = Math.floor(compases); song.total = song.nMeas * song.mb; }
       loadSong(song, clave);
     },
-    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, ''),
+    tituloTopbar: () => state.sinPieza ? 'Ensayo' : 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, ''),
     // Lo que necesita el modo edición (Edicion.html).
     puente: {
       hooks,

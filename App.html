@@ -132,7 +132,7 @@
       if (p === nombre) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
     });
     // La barra de reproducción solo existe en el ensayo; al salir se corta el audio.
-    $('#barra-reproduccion').classList.toggle('oculto', nombre !== 'ensayo');
+    $('#barra-reproduccion').classList.toggle('oculto', nombre !== 'ensayo' || !!(window.Ensayo && window.Ensayo.sinPieza()));
     if (window.Ensayo) {
       if (nombre === 'ensayo') window.Ensayo.refrescar(); else window.Ensayo.detener();
     }
