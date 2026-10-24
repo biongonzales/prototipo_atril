@@ -343,7 +343,8 @@
   /* Cabecera del ensayo: título de la pieza + botón para ocultar los controles, que van debajo. */
   .panel-ensayo .ensayo-cabecera { flex-wrap: nowrap; align-items: center; }
   .panel-ensayo .ensayo-cabecera-texto { flex: 1 1 auto; }
-  .panel-ensayo h1 { overflow-wrap: anywhere; }
+  /* El título de la pieza usa el mismo tamaño que el título de la topbar (.topbar-titulo). */
+  .panel-ensayo h1 { font-size: 18px; line-height: 24px; overflow-wrap: anywhere; }
   .btn-controles { flex-shrink: 0; }
   .ensayo-controles {
     display: flex;
@@ -641,7 +642,7 @@
   @media (max-width: 640px) {
     :root { --pad: 14px; }
     h1 { font-size: 22px; line-height: 28px; }
-    .topbar-titulo { font-size: 16px; }
+    .topbar-titulo, .panel-ensayo h1 { font-size: 16px; }
     .dash-tarjeta { padding: 14px; }
     .btn-controles span { display: none; }
     .btn-controles { padding: 5px 10px; }

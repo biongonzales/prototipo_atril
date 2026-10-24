@@ -676,8 +676,7 @@ function loadSong(song, key) {
   state.keySf = song.sf; state.bpm = song.bpm;
   state.restored = false; state.saved = [];
   fillVoices(); fillKeys(); updateLabels(); setBpmUi(); renderSaved();
-  const msg = $('#msg');
-  msg.textContent = song.hasKey || song.sample ? '' : 'El archivo no trae armadura. Elegí la correcta en «Armadura» si hace falta.'.replace('Elegí', 'Elige');
+  $('#msg').textContent = '';
   renderScore();
   restore();   // lee del servidor tramos, tempo y voz de esta canción y refresca la interfaz
 }
