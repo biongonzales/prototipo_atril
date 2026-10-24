@@ -72,8 +72,35 @@ function filaItem(it) {
     } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
     finally { b.disabled = false; etiqueta(); refrescarIconos(); }
   });
-  acc.appendChild(b); tr.appendChild(acc);
+  const del = el('button', 'btn btn-chico btn-eliminar');
+  del.type = 'button'; del.title = 'Eliminar ' + it.titulo; del.setAttribute('aria-label', 'Eliminar ' + it.titulo);
+  del.innerHTML = '<i data-lucide="trash-2"></i>';
+  del.addEventListener('click', () => eliminar(it, del));
+  acc.append(b, ' ', del); tr.appendChild(acc);
   return tr;
+}
+
+async function eliminar(it, boton) {
+  const cs = getComputedStyle(document.documentElement);
+  const r = await Swal.fire({
+    icon: 'warning', title: '¿Seguro que quieres eliminar?',
+    html: 'Se eliminará <b></b> de la Biblioteca. Pasa a la papelera de tu Drive.',
+    showCancelButton: true, confirmButtonText: 'Sí, eliminar', cancelButtonText: 'Cancelar', reverseButtons: true,
+    confirmButtonColor: '#dc2626', cancelButtonColor: '#64748b', focusCancel: true,
+    background: cs.getPropertyValue('--superficie').trim(), color: cs.getPropertyValue('--slate-900').trim(),
+    didOpen: (p) => { p.querySelector('b').textContent = it.titulo; }
+  });
+  if (!r.isConfirmed) return;
+  boton.disabled = true;
+  try {
+    await ejecutar('eliminarMidi', it.id);
+    est.items = est.items.filter((x) => x.id !== it.id);
+    renderTabla();
+    toastExito('«' + it.titulo + '» eliminado');
+  } catch (e) {
+    boton.disabled = false;
+    toastError(mensajeDe(e, 'No se pudo eliminar el MIDI.'));
+  }
 }
 
 function renderTabla() {

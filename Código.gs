@@ -1,5 +1,5 @@
 /**
- * Ensayo Coral: aplicación web de práctica coral.
+ * ATRIL APP: aplicación web de práctica coral.
  * El estado por canción (tramos guardados, tempo y voz) y las preferencias
  * (tema) se guardan en UserProperties.
  */
@@ -10,7 +10,7 @@ const MAX_SAVED_RANGES = 100;
 
 function doGet() {
   return HtmlService.createTemplateFromFile('Index').evaluate()
-    .setTitle('Ensayo Coral')
+    .setTitle('ATRIL APP')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
@@ -121,6 +121,17 @@ function guardarMidi(titulo, base64, meta) {
 function obtenerMidi(id) {
   const archivo = archivoEnMidis_(id).archivo;
   return { titulo: archivo.getName().replace(/\.midi?$/i, ''), base64: Utilities.base64Encode(archivo.getBlob().getBytes()) };
+}
+
+/** Manda a la papelera de Drive un MIDI de la biblioteca (se puede recuperar desde la papelera). Solo atiende la carpeta MIDIS. */
+function eliminarMidi(id) {
+  const lock = LockService.getUserLock();
+  lock.waitLock(20000);
+  try {
+    const r = archivoEnMidis_(id);
+    r.archivo.setTrashed(true);
+    return true;
+  } finally { lock.releaseLock(); }
 }
 
 // Valida que el contenido (base64) sea un MIDI de tamaño razonable y devuelve sus bytes.

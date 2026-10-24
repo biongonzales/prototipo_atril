@@ -114,7 +114,7 @@
   // Una sola lista: cada panel necesita <section id="panel-xxx"> y <button id="btn-xxx">.
   const PANELES = ['biblioteca', 'ensayo', 'guia'];
   const TITULOS_PANEL = { biblioteca: 'Biblioteca', guia: 'Guía de uso' };
-  let panelActual = 'ensayo';
+  let panelActual = 'biblioteca';
 
   // La topbar nombra la vista abierta; en el ensayo añade la voz que se practica («Ensayo · Tenor»).
   function refrescarTituloTopbar() {
@@ -153,6 +153,7 @@
     });
 
     refrescarIconos();
+    mostrarPanel('biblioteca');   // la app arranca en la Biblioteca
 
     ejecutar('getUsuario').then(function (correo) {
       if (correo) $('#usuario-nombre').textContent = correo;
