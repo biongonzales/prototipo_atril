@@ -313,7 +313,6 @@ function renderScore(opts) {
   if (cur.length) lines.push(cur);
 
   const LH = 140 + 16 * (nEstrofas - 1);
-  if (pdf && opts.soloContar) return { n: lines.length, LH };
   const li0 = pdf ? opts.desde : 0, li1 = pdf ? Math.min(opts.hasta, lines.length) : lines.length;
   const H = (li1 - li0) * LH + 12;
   const renderer = new VF.Renderer(host, VF.Renderer.Backends.SVG);
@@ -328,9 +327,11 @@ function renderScore(opts) {
   svg.insertBefore(hitLayer, svg.firstChild);
   const pieceOf = new Map();
   let prevTie = null;
+  let yCur = 0; const pasos = [];   // PDF: cada sistema empieza justo debajo del anterior (según lo que realmente ocupa)
 
   lines.forEach((ms, li) => {
     if (li < li0 || li >= li1) return;
+    const ysis = pdf ? yCur : (li - li0) * LH;
     const lyrics = [];
     let pieSistema = 0;   // lo más bajo que llega el dibujo de las notas (cabezas, plicas y barras) en este sistema
     const extraFirst = firstExtra(ms[0]);
@@ -339,7 +340,7 @@ function renderScore(opts) {
     let x = padL;
     ms.forEach((mi, k) => {
       const w = Math.round(base[mi] * f + (k === 0 ? extraFirst : 0));
-      const y = (li - li0) * LH;
+      const y = ysis;
       const stave = new VF.Stave(x, y, w);
       if (k === 0) {
         if (cfg.ann) stave.addClef(cfg.vf, 'default', cfg.ann); else stave.addClef(cfg.vf);
@@ -432,15 +433,25 @@ function renderScore(opts) {
           const t = document.createElementNS(NS, 'text');
           t.setAttribute('class', 'letra'); t.setAttribute('x', l.x); t.setAttribute('y', y0 + r * 16);
           t.setAttribute('text-anchor', 'middle'); t.setAttribute('pointer-events', 'none');
-          t.setAttribute('font-family', pdf ? 'Helvetica, Arial, sans-serif' : 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
+          t.setAttribute('font-family', pdf ? 'times, serif' : 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', pdf ? 14 : 13);
           if (pdf) { t.setAttribute('fill', '#000'); t.setAttribute('stroke', 'none'); }
           t.textContent = txt;
           svg.appendChild(t);
         });
       });
     }
+    if (pdf) {
+      const filas = lyrics.reduce((m, l) => Math.max(m, l.txts.reduce((a, t, r) => (t ? r + 1 : a), 0)), 0);
+      const fin = (filas ? pieSistema + 18 + (filas - 1) * 16 : pieSistema) + 5;
+      const paso = fin - ysis + 6;
+      pasos.push(paso); yCur += paso;
+    }
   });
-  if (pdf) return { n: lines.length, LH };
+  if (pdf) {
+    const alto = yCur + 12;
+    svg.setAttribute('height', alto); svg.setAttribute('viewBox', `0 0 ${W} ${alto}`);
+    return { n: lines.length, pasos, alto };
+  }
   host.querySelector('svg').addEventListener('click', onScoreClick);
   applySelection();
   if (hooks.alRenderizar) hooks.alRenderizar();
@@ -487,17 +498,17 @@ async function generarPdf() {
   if (datos.compositor) doc.text(datos.compositor, PW - M, M + 84, { align: 'right' });
   const cab = 100;   // alto que ocupa el encabezado en la primera página
 
-  const c = partituraParaPdf(WLOG, 0, 0, true); c.tmp.remove();
-  const total = c.r.n, alto = c.r.LH * esc;
+  const c = partituraParaPdf(WLOG, 0, Infinity, true); c.tmp.remove();
+  const total = c.r.n, pasos = c.r.pasos;
   let desde = 0, primera = true;
   while (desde < total) {
     const libre = PH - M - (primera ? M + cab : M);
-    const caben = Math.max(1, Math.floor((libre - 12 * esc) / alto));
-    const hasta = Math.min(total, desde + caben);
+    let hasta = desde, usado = 12 * esc;
+    while (hasta < total && (hasta === desde || usado + pasos[hasta] * esc <= libre)) { usado += pasos[hasta] * esc; hasta++; }
     const p = partituraParaPdf(WLOG, desde, hasta, false);
     try {
       const svg = p.tmp.querySelector('svg');
-      await doc.svg(svg, { x: M, y: primera ? M + cab : M, width: ancho, height: (hasta - desde) * alto + 12 * esc });
+      await doc.svg(svg, { x: M, y: primera ? M + cab : M, width: ancho, height: p.r.alto * esc });
     } finally { p.tmp.remove(); }
     desde = hasta; primera = false;
     if (desde < total) doc.addPage();
