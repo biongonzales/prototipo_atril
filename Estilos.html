@@ -525,7 +525,7 @@
   .tabla-wrap.drop-activo { outline: 2px dashed var(--teal-600); outline-offset: 3px; }
   .tabla-datos { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 14px; }
   .tabla-datos th {
-    text-align: left;
+    text-align: center;
     padding: 10px 16px;
     background: var(--slate-100);
     color: var(--slate-500);
@@ -542,6 +542,8 @@
   .tabla-col-titulo { font-weight: 600; color: var(--slate-900); }
   .tabla-sub { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--slate-500); }
   .tabla-col-acciones { text-align: right !important; white-space: nowrap; }
+  .tabla-datos th.tabla-col-acciones { text-align: center !important; }
+  .tabla-datos td:nth-child(n+2):not(.tabla-col-acciones) { text-align: center; }
   .titulo-linea { display: flex; align-items: center; gap: 6px; }
   .btn-expandir, .tabla-detalle { display: none; }
   .btn-expandir { border: none; background: transparent; color: var(--slate-500); width: 28px; height: 28px; padding: 0; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center; flex: none; }

@@ -92,7 +92,7 @@ function filaItem(it) {
   ed.addEventListener('click', () => editarDatos(it, ed));
   const del = el('button', 'btn btn-chico btn-eliminar');
   del.type = 'button'; del.title = 'Eliminar ' + it.titulo; del.setAttribute('aria-label', 'Eliminar ' + it.titulo);
-  del.innerHTML = '<i data-lucide="trash-2"></i>';
+  del.innerHTML = '<i data-lucide="trash-2"></i><span class="txt-pc">Eliminar</span>';
   del.addEventListener('click', () => eliminar(it, del));
   acc.append(b, ' ', ed, ' ', del); tr.appendChild(acc);
   return tr;
