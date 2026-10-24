@@ -189,7 +189,11 @@ function aligned(d, p, mb) {
   if (d === 0.75 || d === 0.5) return m(p, 0.5);
   return true;
 }
-function decompose(len, pos, mb) {
+// relajado (notas): si la duración es exactamente una figura, se dibuja como esa figura empiece donde empiece
+// (una blanca en el 2.º tiempo sigue siendo una blanca, en cualquier compás). Si no, se parte según los tiempos.
+// Los silencios siguen repartiéndose por tiempos.
+function decompose(len, pos, mb, relajado) {
+  if (relajado) { const exacta = DOPT.find((o) => Math.abs(o[0] - len) < EPS); if (exacta) return [exacta]; }
   const out = []; let rem = len, p = pos;
   while (rem > EPS) {
     let c = null;
@@ -208,7 +212,7 @@ function buildMeasures(notes, mb, nMeas) {
       if (n.end <= ms + EPS || n.start >= me - EPS) return;
       const s = Math.max(n.start, ms), e = Math.min(n.end, me);
       if (s > cur + EPS) rests(cur, s);
-      const parts = decompose(e - s, s - ms, mb);
+      const parts = decompose(e - s, s - ms, mb, true);
       parts.forEach((o, k) => items.push({
         rest: false, noteIdx: i, midi: n.midi, code: o[1], dots: o[2], len: o[0],
         tiePrev: k > 0 || n.start < ms - EPS,
