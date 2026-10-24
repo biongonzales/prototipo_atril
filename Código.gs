@@ -123,6 +123,50 @@ function obtenerMidi(id) {
   return { titulo: archivo.getName().replace(/\.midi?$/i, ''), base64: Utilities.base64Encode(archivo.getBlob().getBytes()) };
 }
 
+/**
+ * Cambia el compositor y el arreglo de una pieza de la biblioteca (quedan en la descripción del archivo).
+ */
+function actualizarDatos(id, datos) {
+  const d = datos || {};
+  const lock = LockService.getUserLock();
+  lock.waitLock(20000);
+  try {
+    const archivo = archivoEnMidis_(id).archivo;
+    let meta = null;
+    try { meta = JSON.parse(archivo.getDescription() || 'null'); } catch (e) { meta = null; }
+    meta = meta || {};
+    meta.compositor = texto80_(d.compositor);
+    meta.arreglo = texto80_(d.arreglo);
+    archivo.setDescription(JSON.stringify(meta));
+    return itemMidi_(archivo);
+  } finally { lock.releaseLock(); }
+}
+
+/**
+ * Reemplaza el contenido de una pieza de la biblioteca (por ejemplo, al añadir letra) sin crear una versión nueva.
+ * Conserva el título, el compositor, el arreglo y los datos de versión. Drive no deja cambiar un archivo binario
+ * en el sitio, así que se crea el archivo nuevo con el mismo nombre y el anterior va a la papelera (el id cambia).
+ */
+function actualizarMidi(id, base64, meta) {
+  const bytes = bytesMidi_(base64);
+  const nuevo = metaLimpia_(meta);
+  const lock = LockService.getUserLock();
+  lock.waitLock(20000);
+  try {
+    const o = archivoEnMidis_(id);
+    let previo = null;
+    try { previo = JSON.parse(o.archivo.getDescription() || 'null'); } catch (e) { previo = null; }
+    previo = previo || {};
+    const m = {};
+    Object.keys(previo).forEach(function (k) { m[k] = previo[k]; });
+    ['compas', 'bpm', 'compases', 'voces'].forEach(function (k) { m[k] = nuevo[k]; });
+    const archivo = o.carpeta.createFile(Utilities.newBlob(bytes, 'audio/midi', o.archivo.getName()));
+    archivo.setDescription(JSON.stringify(m));
+    o.archivo.setTrashed(true);
+    return itemMidi_(archivo);
+  } finally { lock.releaseLock(); }
+}
+
 /** Manda a la papelera de Drive un MIDI de la biblioteca (se puede recuperar desde la papelera). Solo atiende la carpeta MIDIS. */
 function eliminarMidi(id) {
   const lock = LockService.getUserLock();
@@ -142,10 +186,15 @@ function bytesMidi_(base64) {
   return bytes;
 }
 
+// Texto libre corto (compositor, arreglo): sin saltos de línea y de hasta 80 caracteres.
+function texto80_(x) { return String(x === undefined || x === null ? '' : x).replace(/\s+/g, ' ').trim().slice(0, 80); }
+
 // Deja solo los campos esperados de lo que la app reconoció del MIDI.
 function metaLimpia_(meta) {
   const m = meta || {};
   return {
+    compositor: texto80_(m.compositor),
+    arreglo: texto80_(m.arreglo),
     compas: String(m.compas || '').slice(0, 10),
     bpm: isFinite(m.bpm) ? Number(m.bpm) : null,
     compases: isFinite(m.compases) ? Number(m.compases) : null,
@@ -223,6 +272,8 @@ function guardarVersion(idOrigen, base64, meta, resumen) {
     let nombre = nombreVersion_(rv.raiz, n);
     while (o.carpeta.getFilesByName(nombre + '.mid').hasNext()) { n++; nombre = nombreVersion_(rv.raiz, n); }
     const archivo = o.carpeta.createFile(Utilities.newBlob(bytes, 'audio/midi', nombre + '.mid'));
+    limpio.compositor = texto80_(rv.meta && rv.meta.compositor);   // la versión hereda el compositor y el arreglo
+    limpio.arreglo = texto80_(rv.meta && rv.meta.arreglo);
     limpio.raiz = rv.raiz;
     limpio.version = n;
     limpio.origen = String(idOrigen);

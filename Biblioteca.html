@@ -36,7 +36,7 @@ const mensajeDe = (e, porDefecto) => (e && e.message ? String(e.message).replace
 /* ------------------------------------------------------------------ tabla */
 function celdaMensaje(texto, accion) {
   const tr = el('tr'), td = el('td', 'tabla-mensaje', texto);
-  td.colSpan = 7;
+  td.colSpan = 8;
   if (accion) { const b = el('button', 'btn btn-chico', accion.texto); b.type = 'button'; b.addEventListener('click', accion.fn); td.appendChild(document.createElement('br')); td.appendChild(b); }
   tr.appendChild(td);
   return tr;
@@ -47,6 +47,8 @@ function filaItem(it) {
   const tit = el('td', 'tabla-col-titulo', it.titulo);
   if (m && m.version > 0) tit.appendChild(el('div', 'tabla-sub', 'Versión ' + m.version + ' de ' + (m.raiz || it.titulo)));   // las versiones son filas propias
   tr.appendChild(tit);
+  tr.appendChild(el('td', 'tabla-texto', m && m.compositor ? m.compositor : '–'));
+  tr.appendChild(el('td', 'tabla-texto', m && m.arreglo ? m.arreglo : '–'));
   tr.appendChild(el('td', '', m && m.compas ? m.compas : '–'));
   tr.appendChild(el('td', '', m && m.bpm ? `♩ = ${m.bpm}` : '–'));
   tr.appendChild(el('td', '', m && m.compases ? String(m.compases) : '–'));
@@ -72,12 +74,45 @@ function filaItem(it) {
     } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
     finally { b.disabled = false; etiqueta(); refrescarIconos(); }
   });
+  const ed = el('button', 'btn btn-chico');
+  ed.type = 'button'; ed.title = 'Editar compositor y arreglo de ' + it.titulo; ed.setAttribute('aria-label', 'Editar ' + it.titulo);
+  ed.innerHTML = '<i data-lucide="pencil"></i> Editar';
+  ed.addEventListener('click', () => editarDatos(it, ed));
   const del = el('button', 'btn btn-chico btn-eliminar');
   del.type = 'button'; del.title = 'Eliminar ' + it.titulo; del.setAttribute('aria-label', 'Eliminar ' + it.titulo);
   del.innerHTML = '<i data-lucide="trash-2"></i>';
   del.addEventListener('click', () => eliminar(it, del));
-  acc.append(b, ' ', del); tr.appendChild(acc);
+  acc.append(b, ' ', ed, ' ', del); tr.appendChild(acc);
   return tr;
+}
+
+// Compositor y arreglo de una pieza ya guardada.
+async function editarDatos(it, boton) {
+  const cs = getComputedStyle(document.documentElement), m = it.meta || {};
+  const r = await Swal.fire({
+    title: 'Editar datos', html: '<p class="swal-pieza"></p><label class="swal-campo">Compositor<input id="sw-compositor" class="swal2-input" maxlength="80" autocomplete="off"></label><label class="swal-campo">Arreglo<input id="sw-arreglo" class="swal2-input" maxlength="80" autocomplete="off"></label>',
+    showCancelButton: true, confirmButtonText: 'Guardar', cancelButtonText: 'Cancelar', reverseButtons: true,
+    confirmButtonColor: '#0f766e', cancelButtonColor: '#64748b',
+    background: cs.getPropertyValue('--superficie').trim(), color: cs.getPropertyValue('--slate-900').trim(),
+    didOpen: (p) => {
+      p.querySelector('.swal-pieza').textContent = it.titulo;
+      p.querySelector('#sw-compositor').value = m.compositor || ''; p.querySelector('#sw-arreglo').value = m.arreglo || '';
+      p.querySelector('#sw-compositor').focus();
+    },
+    preConfirm: () => ({ compositor: document.getElementById('sw-compositor').value, arreglo: document.getElementById('sw-arreglo').value })
+  });
+  if (!r.isConfirmed) return;
+  boton.disabled = true;
+  try {
+    const nuevo = await ejecutar('actualizarDatos', it.id, r.value);
+    const i = est.items.findIndex((x) => x.id === it.id);
+    if (i >= 0) est.items[i] = nuevo;
+    renderTabla();
+    toastExito('Datos actualizados');
+  } catch (e) {
+    boton.disabled = false;
+    toastError(mensajeDe(e, 'No se pudieron guardar los datos.'));
+  }
 }
 
 async function eliminar(it, boton) {
@@ -153,6 +188,7 @@ function abrirModal(archivo, buf, resumen) {
   resumen.voces.forEach((v) => caja.appendChild(el('span', 'voz-chip', v)));
   const input = $('#midi-titulo');
   input.value = archivo.name.replace(/\.(mid|midi)$/i, '').toUpperCase().replace(NO_PERMITIDOS, '').slice(0, 80);
+  $('#midi-compositor').value = ''; $('#midi-arreglo').value = '';
   $('#modal-midi').classList.remove('oculto');
   validarTitulo(); refrescarIconos();
   input.focus(); input.select();
@@ -172,7 +208,8 @@ async function guardar() {
   const btn = $('#modal-midi-guardar'); btn.disabled = true; btn.textContent = 'Guardando…';
   $('#modal-midi-cancelar').disabled = true; $('#modal-midi-error').textContent = '';
   try {
-    const it = await ejecutar('guardarMidi', titulo, aBase64(p.buf), p.resumen);
+    const datos = Object.assign({}, p.resumen, { compositor: $('#midi-compositor').value, arreglo: $('#midi-arreglo').value });
+    const it = await ejecutar('guardarMidi', titulo, aBase64(p.buf), datos);
     est.items.unshift(it); est.cargado = true; est.error = '';
     est.guardando = false;
     cerrarModal(); renderTabla();

@@ -510,12 +510,34 @@ function textoResumen(r) {
     r.letras && `${r.letras} letra(s)`, r.sincronizadas && `${r.sincronizadas} cambio(s) de tiempo en todas las voces`, r.compases && `${r.compases} compás(es) añadido(s)`
   ].filter(Boolean).join(' · ');
 }
+// Solo se ha escrito letra: no cambia ninguna nota, así que no hace falta una versión nueva.
+const soloLetra = (r) => r.letras > 0 && !r.duraciones && !r.alturas && !r.agregadas && !r.sustituidas && !r.compases && !r.sincronizadas;
+
+// Letra sola: se actualiza el mismo MIDI en la Biblioteca.
+async function guardarLetra(r) {
+  const nombre = $('#title').textContent;
+  const ok = await confirmar({
+    icon: 'question', title: 'Guardar la letra',
+    html: `Se actualizará <b>${esc(nombre)}</b> con ${r.letras} letra(s).<br>No se crea una versión nueva porque no cambia ninguna nota.`,
+    confirmButtonText: 'Guardar letra', cancelButtonText: 'Cancelar'
+  });
+  if (!ok) return;
+  ed.guardando = true;
+  const song = S().song, compases = song.nMeas;
+  const bytes = escribirMidi(song.raw, ed.ov, ed.extra, song.total, ed.warps);
+  const meta = window.Ensayo.analizar(bytes.buffer);
+  meta.compases = compases;
+  const it = await ejecutar('actualizarMidi', ed.libId, aBase64(bytes), meta);
+  window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases);
+  toastExito('Letra guardada en ' + it.titulo);
+}
 async function guardarVersion() {
   const r = resumen();
   if (!r.total || ed.guardando) return;
   const btn = $('#ed-guardar');
   btn.disabled = true;
   try {
+    if (soloLetra(r)) { await guardarLetra(r); return; }
     const prop = await ejecutar('proximaVersion', ed.libId);
     const ok = await confirmar({
       icon: 'question', title: 'Guardar como nueva versión',
@@ -619,6 +641,9 @@ function actualizarPanel() {
   $('#ed-deshacer').disabled = ed.pos === 0; $('#ed-rehacer').disabled = ed.pos >= ed.hist.length - 1;
   $('#ed-descartar').disabled = !r.total;
   $('#ed-guardar').disabled = !r.total || ed.guardando;
+  const letraSola = soloLetra(r);
+  $('#ed-guardar span').textContent = letraSola ? 'Guardar letra' : 'Guardar versión';
+  $('#ed-guardar').title = letraSola ? 'Guardar la letra en este mismo MIDI (sin versión nueva)' : 'Guardar los cambios como una versión nueva';
   $('#ed-comp-menos').disabled = ed.extra === 0;
   $('#ed-contador').textContent = r.total ? String(r.total) : '';
 
