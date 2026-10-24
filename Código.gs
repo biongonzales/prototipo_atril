@@ -215,9 +215,10 @@ function guardarVersion(idOrigen, base64, meta, resumen) {
     limpio.raiz = rv.raiz;
     limpio.version = n;
     limpio.origen = String(idOrigen);
+    const ent = function (x) { return Math.max(0, Math.min(100000, Math.floor(Number(x)) || 0)); };
     limpio.cambios = {
-      total: Number(r.total) || 0, duraciones: Number(r.duraciones) || 0,
-      alturas: Number(r.alturas) || 0, sustituidas: Number(r.sustituidas) || 0
+      total: ent(r.total), duraciones: ent(r.duraciones), alturas: ent(r.alturas), agregadas: ent(r.agregadas),
+      sustituidas: ent(r.sustituidas), letras: ent(r.letras), compases: ent(r.compases)
     };
     archivo.setDescription(JSON.stringify(limpio));
     return itemMidi_(archivo);

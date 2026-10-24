@@ -606,6 +606,15 @@
   .ed-dur.choca:not(.activo) { border-color: #f59e0b; box-shadow: inset 0 0 0 1px #f59e0b; }
   .ed-dur:disabled { opacity: .4; cursor: not-allowed; }
 
+  .ed-letra-grupo { flex: 1 1 260px; }
+  #ed-letra {
+    width: 100%; min-height: 38px; padding: 7px 10px;
+    border: 1px solid var(--slate-300); border-radius: 8px; background: var(--superficie); color: var(--slate-900);
+    font: 500 14px 'Outfit', 'Segoe UI', Roboto, Arial, sans-serif;
+  }
+  #ed-letra:focus { outline: 2px solid var(--edit); border-color: transparent; }
+  #ed-letra:disabled { opacity: .5; }
+  #score text { stroke: none; }   /* la letra no debe llevar contorno */
   #score .pn.mod { fill: var(--edit); stroke: var(--edit); }
   #score .pn.editsel .hit { fill: var(--edit-fondo); stroke: var(--edit); stroke-width: 1.5; }
   .modo-edicion #score .mrect { cursor: default; }

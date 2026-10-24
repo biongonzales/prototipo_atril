@@ -62,6 +62,22 @@ function parseMidi(buf) {
       }
     }
     for (const k in open) for (const o of open[k]) notes.push({ midi: k % 128, ch: Math.floor(k / 128), start: o.start, end: tick, vel: o.vel, on: o.on, off: -1 });
+    // Letra (evento meta 0x05): se asocia a la nota que empieza en ese instante (o la más cercana, hasta 1/8 de negra);
+    // si varias empiezan a la vez, a la más aguda, que es la que se ve en la partitura.
+    const decodificar = (bytes) => {
+      try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch (e) { return new TextDecoder('windows-1252').decode(bytes); }
+    };
+    events.forEach((e, i) => {
+      if (e.meta !== 0x05 || !e.data.length) return;
+      let mejor = null, dist = Infinity;
+      notes.forEach((n) => {
+        const dd = Math.abs(n.start - e.tick);
+        if (dd < dist - 1e-9 || (Math.abs(dd - dist) < 1e-9 && mejor && n.midi > mejor.midi)) { mejor = n; dist = dd; }
+      });
+      if (!mejor || dist > div / 8 || mejor.letraEv !== undefined) return;
+      mejor.letra = decodificar(e.data).replace(/[\r\n]+/g, '').replace(/^[\\/]+/, '');
+      mejor.letraEv = i;
+    });
     out.tracks.push({ name, notes, events });
     p = end;
   }
@@ -75,7 +91,7 @@ function monoLine(notes) {
   const out = [];
   for (const n of s) {
     if (out.length && Math.abs(out[out.length - 1].start - n.start) < EPS) continue;
-    out.push({ midi: n.midi, start: n.start, end: n.end, key: n.key });
+    out.push({ midi: n.midi, start: n.start, end: n.end, key: n.key, letra: n.letra });
   }
   for (let i = 0; i < out.length - 1; i++) if (out[i].end > out[i + 1].start) out[i].end = out[i + 1].start;
   return out.filter((n) => n.end - n.start > EPS);
@@ -110,11 +126,12 @@ function buildSong(parsed, title) {
       // key identifica la nota en el archivo original (pista:evento de nota-on); base es el estado sin editar.
       const notes = byCh[ch].map((n) => {
         const s = q4(n.start / parsed.ppq); let e = q4(n.end / parsed.ppq); if (e <= s) e = s + 0.25;
-        return { midi: n.midi, start: s, end: e, key: ti + ':' + n.on };
+        return { midi: n.midi, start: s, end: e, key: ti + ':' + n.on, letra: n.letra || '', vel: n.vel };
       });
       let name = t.name || `Voz ${voices.length + 1}`;
       if (chs.length > 1) name += ` (canal ${+ch + 1})`;
-      voices.push({ name, notes, line: monoLine(notes), med: median(notes.map((n) => n.midi)), base: notes.map((n) => Object.assign({}, n)) });
+      // t y ch: pista y canal del archivo donde viven las notas de esta voz (las notas nuevas se escriben ahí).
+      voices.push({ name, notes, line: monoLine(notes), med: median(notes.map((n) => n.midi)), base: notes.map((n) => Object.assign({}, n)), t: ti, ch: +ch });
     });
   });
   if (!voices.length) throw new Error('No encontré notas en este MIDI.');
@@ -203,11 +220,40 @@ function decompose(len, pos, mb, relajado) {
   }
   return out;
 }
-function buildMeasures(notes, mb, nMeas) {
+// Compás compuesto (6/8, 9/8, 12/8): el pulso es la negra con puntillo.
+const esCompuesto = (ts) => ts.den === 8 && ts.num >= 6 && ts.num % 3 === 0;
+// Silencios: sin puntillos (salvo los del compás compuesto y la blanca con puntillo de un compás de 3 tiempos) y cada
+// uno empieza donde su duración encaja en el compás: un hueco de 2 tiempos desde el 2.º son dos silencios de negra.
+function decomponerSilencio(len, pos, compuesto) {
+  const m = (x, y) => Math.abs(x / y - Math.round(x / y)) < EPS;
+  const cabe = (d, p) => {
+    if (compuesto) {
+      if (d === 3) return m(p, 3);
+      if (d === 1.5) return m(p, 1.5);
+      if (d === 1) { const r = p % 1.5; return r < EPS || Math.abs(r - 0.5) < EPS; }
+      return d === 0.5 ? m(p, 0.5) : true;
+    }
+    if (d === 4 || d === 3) return p < EPS;
+    if (d === 2) return m(p, 2);
+    if (d === 1) return m(p, 1);
+    return d === 0.5 ? m(p, 0.5) : true;
+  };
+  const cand = compuesto
+    ? [[3, 'h', 1], [1.5, 'q', 1], [1, 'q', 0], [0.5, '8', 0], [0.25, '16', 0]]
+    : [[4, 'w', 0], [3, 'h', 1], [2, 'h', 0], [1, 'q', 0], [0.5, '8', 0], [0.25, '16', 0]];
+  const out = []; let rem = len, p = pos;
+  while (rem > EPS) {
+    const c = cand.find((o) => o[0] <= rem + EPS && cabe(o[0], p)) || cand[cand.length - 1];
+    out.push(c); rem -= c[0]; p += c[0];
+  }
+  return out;
+}
+function buildMeasures(notes, mb, nMeas, compuesto) {
   const M = [];
   for (let mi = 0; mi < nMeas; mi++) {
     const ms = mi * mb, me = ms + mb, items = []; let cur = ms;
-    const rests = (from, to) => { decompose(to - from, from - ms, mb).forEach((o) => items.push({ rest: true, code: o[1], dots: o[2], len: o[0] })); };
+    // ini: posición absoluta (en pulsos) de cada silencio, para poder elegirlo al editar.
+    const rests = (from, to) => { let pos = from; decomponerSilencio(to - from, from - ms, compuesto).forEach((o) => { items.push({ rest: true, code: o[1], dots: o[2], len: o[0], ini: pos }); pos += o[0]; }); };
     notes.forEach((n, i) => {
       if (n.end <= ms + EPS || n.start >= me - EPS) return;
       const s = Math.max(n.start, ms), e = Math.min(n.end, me);
@@ -215,6 +261,7 @@ function buildMeasures(notes, mb, nMeas) {
       const parts = decompose(e - s, s - ms, mb, true);
       parts.forEach((o, k) => items.push({
         rest: false, noteIdx: i, midi: n.midi, code: o[1], dots: o[2], len: o[0],
+        letra: k === 0 && n.start >= ms - EPS ? (n.letra || '') : '',   // la letra va bajo la primera figura de la nota
         tiePrev: k > 0 || n.start < ms - EPS,
         tieNext: k < parts.length - 1 || n.end > me + EPS
       }));
@@ -237,7 +284,7 @@ function renderScore() {
   const VF = Vex.Flow, song = state.song, ts = song.ts, mb = song.mb;
   const cfg = CLEFS[clefFor(curVoice())];
   const sf = state.keySf, keyN = Math.abs(sf);
-  const measures = buildMeasures(curLine(), mb, song.nMeas);
+  const measures = buildMeasures(curLine(), mb, song.nMeas, esCompuesto(ts));
   // Zoom: el pentagrama se compone con un ancho lógico W = ancho disponible / zoom y el SVG se muestra a W * zoom.
   // Con zoom < 1 caben más compases por línea; con zoom > 1 se ve más grande y, si no cabe, se desplaza en horizontal.
   const hostW = host.clientWidth || 600, z = state.zoom;
@@ -245,7 +292,8 @@ function renderScore() {
   ui.lastW = hostW;
   const padL = 6, avail = W - padL - 8;
   const firstExtra = (mi) => 50 + (keyN ? keyN * 10 + 8 : 0) + (mi === 0 ? 30 : 0);
-  const base = measures.map((it) => Math.max(140, 44 + it.length * 30));
+  // Ancho mínimo del compás: 30 por figura, o más si la letra de una sílaba necesita sitio para no pisar a la vecina.
+  const base = measures.map((it) => Math.max(140, 44 + it.reduce((a, x) => a + Math.max(30, x.letra ? x.letra.length * 7.5 + 12 : 30), 0)));
   const lines = []; let cur = [], used = 0;
   measures.forEach((it, mi) => {
     const need = base[mi] + (cur.length === 0 ? firstExtra(mi) : 0);
@@ -309,6 +357,11 @@ function renderScore() {
         const n = new VF.StaveNote({ keys, duration: dur, clef: cfg.vf, auto_stem: true });
         if (it.dots) VF.Dot.buildAndAttach([n], { all: true });
         if (acc) n.addModifier(new VF.Accidental(acc), 0);
+        if (it.letra) {
+          const an = new VF.Annotation(it.letra).setFont('Outfit, system-ui, sans-serif', 13, 'normal')
+            .setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
+          n.addModifier(an, 0);
+        }
         ticks.push(n); metas.push(it);
       });
       const voice = new VF.Voice({ num_beats: ts.num, beat_value: ts.den }).setMode(VF.Voice.Mode.SOFT);
@@ -322,16 +375,15 @@ function renderScore() {
         const g = ctx.openGroup('pn'); g.classList.add('pn');
         n.setContext(ctx).draw();
         ctx.closeGroup();
-        const piece = { g, noteIdx: it.rest ? -1 : it.noteIdx, sys: li };
-        if (!it.rest) {
-          try {
-            const bb = g.getBBox(), r = document.createElementNS(NS, 'rect');
-            r.setAttribute('class', 'hit'); r.setAttribute('x', bb.x - 5); r.setAttribute('y', y + 22);
-            r.setAttribute('width', bb.width + 10); r.setAttribute('height', 96);
-            g.insertBefore(r, g.firstChild);
-          } catch (e) { /* sin bbox */ }
-          g.setAttribute('data-note', it.noteIdx);
-        }
+        const piece = { g, noteIdx: it.rest ? -1 : it.noteIdx, sys: li, rs: it.rest ? { ini: it.ini, len: it.len } : null };
+        try {
+          const bb = g.getBBox(), r = document.createElementNS(NS, 'rect');
+          r.setAttribute('class', 'hit'); r.setAttribute('x', bb.x - 5); r.setAttribute('y', y + 22);
+          r.setAttribute('width', bb.width + 10); r.setAttribute('height', 96);
+          g.insertBefore(r, g.firstChild);
+        } catch (e) { /* sin bbox */ }
+        if (it.rest) { g.setAttribute('data-rs', it.ini); g.setAttribute('data-rl', it.len); }   // silencio elegible al editar
+        else g.setAttribute('data-note', it.noteIdx);
         ui.pieces.push(piece); pieceOf.set(n, piece);
         if (it.tiePrev && prevTie) {
           try {
@@ -362,17 +414,21 @@ function renderScore() {
 // Qué nota o compás hay bajo el puntero. Se mira toda la pila de elementos porque las líneas del pentagrama
 // quedan por encima del área clicable del compás y tapaban el clic.
 function ubicar(e) {
-  let pn = null, mr = null;
+  let pn = null, mr = null, rs = null;
   for (const x of document.elementsFromPoint(e.clientX, e.clientY)) {
-    if (!pn && x.closest) { const g = x.closest('.pn'); if (g && g.hasAttribute('data-note')) pn = g; }
+    if (x.closest) {
+      const g = x.closest('.pn');
+      if (g && !pn && g.hasAttribute('data-note')) pn = g;
+      if (g && !rs && g.hasAttribute('data-rs')) rs = g;
+    }
     if (!mr && x.classList && x.classList.contains('mrect')) mr = x;
   }
-  return { pn, mr };
+  return { pn, mr, rs };
 }
 function onScoreClick(e) {
   if (!state.song) return;
-  const { pn, mr } = ubicar(e);
-  if (hooks.alClicNota && hooks.alClicNota(pn)) return;   // en modo edición el clic elige la nota a editar
+  const { pn, mr, rs } = ubicar(e);
+  if (hooks.alClicNota && hooks.alClicNota(pn, rs)) return;   // en modo edición el clic elige la nota o el silencio a editar
   if (pn) {
     const n = curLine()[+pn.getAttribute('data-note')];
     if (n) pick({ a: n.start, b: n.end });
@@ -789,7 +845,13 @@ function boot() {
       return { compas: `${s.ts.num}/${s.ts.den}`, bpm: s.bpm, compases: s.nMeas, voces: s.voices.map((v) => v.name) };
     },
     // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
-    cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave),
+    // compases: número de compases guardado con la pieza; si es mayor que el que sale de las notas (compases de silencio
+    // añadidos al final al editar), se respeta.
+    cargarMidi: (buf, titulo, clave, compases) => {
+      const song = buildSong(parseMidi(buf), titulo);
+      if (compases > song.nMeas && compases <= 2000) { song.nMeas = Math.floor(compases); song.total = song.nMeas * song.mb; }
+      loadSong(song, clave);
+    },
     tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, ''),
     // Lo que necesita el modo edición (Edicion.html).
     puente: {

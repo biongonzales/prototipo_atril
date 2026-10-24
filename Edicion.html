@@ -1,12 +1,13 @@
 <script>
 /* ============================================================
-   Edición de la voz en el Ensayo: cambiar la duración y la altura de las notas y guardar el
-   resultado como una versión nueva (TÍTULO V1, V2…) en la Biblioteca.
+   Edición de la voz en el Ensayo: cambiar la duración y la altura de las notas, escribir notas en los silencios,
+   convertir notas en silencio, añadir compases al final y escribir la letra bajo las notas. El resultado se guarda
+   como una versión nueva (TÍTULO V1, V2…) en la Biblioteca.
 
    Criterios:
    - El archivo original nunca se modifica; cada guardado es un archivo nuevo.
    - Se edita sobre los eventos originales del MIDI: solo cambian las notas tocadas; tempo, instrumentos,
-     controladores, letra, etc. se conservan.
+     controladores, etc. se conservan. La letra se guarda como eventos de letra estándar (meta 0x05).
    - La duración se respeta: ninguna nota hace correr a las demás y cada compás sigue completo
      (lo que sobra al acortar es silencio). Alargar sobre otra nota pide confirmación.
    - Si la voz tiene notas simultáneas (divisi), solo se editan las notas visibles; las demás no se tocan.
@@ -15,6 +16,7 @@
 'use strict';
 const $ = (s) => document.querySelector(s);
 const EPS = 1e-6;
+const MAX_COMPASES_EXTRA = 64;
 
 const DURACIONES = [
   { l: 4, n: 'Redonda' }, { l: 3, n: 'Blanca punt.' }, { l: 2, n: 'Blanca' }, { l: 1.5, n: 'Negra punt.' },
@@ -29,51 +31,82 @@ const RANGOS = [
 ];
 const NOMBRES = ['DO', 'DO♯', 'RE', 'RE♯', 'MI', 'FA', 'FA♯', 'SOL', 'SOL♯', 'LA', 'LA♯', 'SI'];
 const nombreNota = (m) => NOMBRES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
-const nombreDur = (l) => { const d = DURACIONES.find((x) => Math.abs(x.l - l) < EPS); return d ? d.n : (Math.round(l * 100) / 100) + ' tiempos'; };
+const num = (x) => String(Math.round(x * 100) / 100).replace('.', ',');
+const nombreDur = (l) => { const d = DURACIONES.find((x) => Math.abs(x.l - l) < EPS); return d ? d.n : num(l) + ' tiempos'; };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clonar = (o) => JSON.parse(JSON.stringify(o));
 
 /* ------------------------------------------------------------------ estado */
-// ov: cambios sobre las notas originales, por clave «pista:evento»: { midi?, start?, end?, del? } (tiempos en pulsos de negra).
-const ed = { activo: false, key: null, ov: {}, hist: [{}], pos: 0, libId: null, base: new Map(), guardando: false, avisoRango: null };
+// ov: cambios sobre las notas del archivo, por clave «pista:evento» (tiempos en pulsos de negra):
+//   { midi?, start?, end?, letra?, del? }                  → nota existente modificada, o borrada (queda un silencio)
+//   { nuevo: true, t, ch, midi, start, end, vel, letra? }   → nota escrita por el usuario (clave «+n»)
+// extra: compases de silencio añadidos al final de la pieza.
+const ed = {
+  activo: false, key: null, rs: null, ov: {}, extra: 0, hist: [{ ov: {}, extra: 0 }], pos: 0,
+  libId: null, base: new Map(), nMeasBase: 0, nuevoId: 0, guardando: false
+};
 let P = null;
 const S = () => P.estado();
 const linea = () => P.linea();
 const idxDe = (k) => (k ? linea().findIndex((n) => n.key === k) : -1);
-const cambios = () => Object.keys(ed.ov).length;
+const cambios = () => Object.keys(ed.ov).length + ed.extra;
 
 function resumen() {
-  let duraciones = 0, alturas = 0, sustituidas = 0;
+  const r = { total: cambios(), duraciones: 0, alturas: 0, agregadas: 0, sustituidas: 0, letras: 0, compases: ed.extra };
   Object.values(ed.ov).forEach((o) => {
-    if (o.del) sustituidas++;
-    else { if (o.midi !== undefined) alturas++; if (o.start !== undefined || o.end !== undefined) duraciones++; }
+    if (o.nuevo) r.agregadas++;
+    else if (o.del) r.sustituidas++;
+    else { if (o.midi !== undefined) r.alturas++; if (o.start !== undefined || o.end !== undefined) r.duraciones++; }
+    if (o.letra !== undefined && !o.del) r.letras++;
   });
-  return { total: cambios(), duraciones, alturas, sustituidas };
+  return r;
 }
 
 /* ------------------------------------------------------------------ escritura del MIDI */
 function vlq(n) { const o = [n & 127]; while ((n >>= 7)) o.unshift((n & 127) | 128); return o; }
+const utf8 = (s) => new TextEncoder().encode(s);
 
 /**
  * Serializa el MIDI original (raw, producido por parseMidi) aplicando los cambios `ov`.
  * Las pistas y eventos no tocados se escriben igual que estaban; el original no se muta.
+ * extra/totalBeats: si se añadieron compases al final, el fin de cada pista se alarga hasta el final de la pieza.
  */
-function escribirMidi(raw, ov) {
+function escribirMidi(raw, ov, extra, totalBeats) {
   const ppq = raw.ppq;
+  const finMinimo = extra > 0 ? Math.round(totalBeats * ppq) : 0;
   const pistas = raw.tracks.map((t, ti) => {
     const evs = t.events.map((e, i) => Object.assign({ i }, e));
     const borrar = new Set();
+    const nuevo = (e) => { e.i = evs.length; evs.push(e); return e; };
     t.notes.forEach((n) => {
       const o = ov[ti + ':' + n.on];
       if (!o) return;
-      if (o.del) { borrar.add(n.on); if (n.off >= 0) borrar.add(n.off); return; }
+      if (o.del) {
+        borrar.add(n.on); if (n.off >= 0) borrar.add(n.off); if (n.letraEv >= 0) borrar.add(n.letraEv);
+        return;
+      }
       if (o.midi !== undefined) { evs[n.on].a = o.midi; if (n.off >= 0) evs[n.off].a = o.midi; }
       if (o.start !== undefined) evs[n.on].tick = Math.round(o.start * ppq);
       if (o.end !== undefined) {
         const fin = Math.max(Math.round(o.end * ppq), evs[n.on].tick + 1);
         if (n.off >= 0) evs[n.off].tick = fin;
-        else evs.push({ i: evs.length, tick: fin, st: 0x80 | n.ch, a: evs[n.on].a, b: 0 });   // la nota no tenía note-off
+        else nuevo({ tick: fin, st: 0x80 | n.ch, a: evs[n.on].a, b: 0 });   // la nota no tenía note-off
       }
+      if (o.letra !== undefined) {
+        if (n.letraEv >= 0) borrar.add(n.letraEv);
+        if (o.letra) nuevo({ tick: evs[n.on].tick, meta: 0x05, data: utf8(o.letra) });
+      } else if (o.start !== undefined && n.letraEv >= 0) {
+        evs[n.letraEv].tick = evs[n.on].tick;   // la letra acompaña a su nota si esta se recorta
+      }
+    });
+    // notas escritas por el usuario
+    Object.keys(ov).forEach((k) => {
+      const o = ov[k];
+      if (!o.nuevo || o.t !== ti) return;
+      const ini = Math.round(o.start * ppq), fin = Math.max(Math.round(o.end * ppq), ini + 1);
+      nuevo({ tick: ini, st: 0x90 | o.ch, a: o.midi, b: o.vel || 80 });
+      nuevo({ tick: fin, st: 0x80 | o.ch, a: o.midi, b: 0x40 });
+      if (o.letra) nuevo({ tick: ini, meta: 0x05, data: utf8(o.letra) });
     });
     let fin = 0;
     const lista = evs.filter((e) => {
@@ -89,7 +122,7 @@ function escribirMidi(raw, ov) {
       return t4 === 0x90 ? 2 : 1;
     };
     lista.sort((a, b) => a.tick - b.tick || clase(a) - clase(b) || a.i - b.i);
-    fin = Math.max(fin, lista.length ? lista[lista.length - 1].tick : 0);
+    fin = Math.max(fin, finMinimo, lista.length ? lista[lista.length - 1].tick : 0);
     lista.push({ tick: fin, meta: 0x2F, data: new Uint8Array(0) });
 
     const bytes = [];
@@ -131,15 +164,23 @@ function conCambios(b) {
   return Object.assign({}, b, {
     midi: o.midi !== undefined ? o.midi : b.midi,
     start: o.start !== undefined ? o.start : b.start,
-    end: o.end !== undefined ? o.end : b.end
+    end: o.end !== undefined ? o.end : b.end,
+    letra: o.letra !== undefined ? o.letra : b.letra
   });
 }
 // Recalcula las notas y la línea de cada voz a partir de las originales + cambios. El reproductor las lee en vivo.
 function reconstruir() {
-  S().song.voices.forEach((v) => {
+  const song = S().song;
+  song.nMeas = ed.nMeasBase + ed.extra;
+  song.total = song.nMeas * song.mb;
+  song.voices.forEach((v) => {
     if (!v.base) return;
     const notas = [];
     v.base.forEach((b) => { const n = conCambios(b); if (n && n.end - n.start > EPS) notas.push(n); });
+    Object.keys(ed.ov).forEach((k) => {
+      const o = ed.ov[k];
+      if (o.nuevo && o.t === v.t && o.ch === v.ch && o.end - o.start > EPS) notas.push({ midi: o.midi, start: o.start, end: o.end, key: k, letra: o.letra || '', vel: o.vel });
+    });
     notas.sort((a, b) => a.start - b.start || a.midi - b.midi);
     v.notes = notas;
     v.line = P.monoLine(notas);
@@ -147,23 +188,32 @@ function reconstruir() {
 }
 function normalizar(k, o) {
   const b = ed.base.get(k);
-  if (!b) return;
-  if (o.del) { delete o.midi; delete o.start; delete o.end; return; }
+  if (!b) return;   // las notas nuevas no tienen original con el que comparar
+  if (o.del) { delete o.midi; delete o.start; delete o.end; delete o.letra; return; }
   if (o.midi !== undefined && o.midi === b.midi) delete o.midi;
   if (o.start !== undefined && Math.abs(o.start - b.start) < EPS) delete o.start;
   if (o.end !== undefined && Math.abs(o.end - b.end) < EPS) delete o.end;
+  if (o.letra !== undefined && (o.letra || '') === (b.letra || '')) delete o.letra;
+}
+function guardarHist() {
+  ed.hist = ed.hist.slice(0, ed.pos + 1);
+  ed.hist.push({ ov: clonar(ed.ov), extra: ed.extra });
+  ed.pos++;
 }
 function aplicar(cambiosNuevos) {
   const nuevo = clonar(ed.ov);
   Object.keys(cambiosNuevos).forEach((k) => {
-    const o = Object.assign(nuevo[k] || {}, cambiosNuevos[k]);
+    const val = cambiosNuevos[k], cur = nuevo[k];
+    if (val === null || (val.del && cur && cur.nuevo)) { delete nuevo[k]; return; }   // borrar una nota nueva la elimina del todo
+    const o = Object.assign(cur || {}, val);
     normalizar(k, o);
     if (Object.keys(o).length) nuevo[k] = o; else delete nuevo[k];
   });
-  ed.hist = ed.hist.slice(0, ed.pos + 1); ed.hist.push(nuevo); ed.pos++;
   ed.ov = nuevo;
+  guardarHist();
   refrescar();
 }
+function restaurar(s) { ed.ov = clonar(s.ov); ed.extra = s.extra; refrescar(); }
 function refrescar() {
   reconstruir();
   P.render();   // dispara pintar() y actualizarPanel() por el enganche alRenderizar
@@ -180,16 +230,34 @@ function confirmar(opciones) {
 const aviso = (t) => toastBase('warning', t);
 
 function elegir(key, sonar) {
-  ed.key = key;
+  ed.key = key; ed.rs = null;
   pintar(); actualizarPanel();
   const n = linea()[idxDe(key)];
   if (n && sonar && !P.reproduciendo()) P.previsualizar(n.midi);
 }
+function elegirSilencio(ini) {
+  if (!huecoEn(ini)) return;
+  ed.rs = { ini }; ed.key = null;
+  pintar(); actualizarPanel();
+}
 function vecina(dir) {
   const l = linea();
   if (!l.length) return;
+  if (ed.rs) {   // con un silencio elegido, ◀ ▶ mueven el punto de inserción de tiempo en tiempo dentro del hueco
+    const h = huecoEn(ed.rs.ini);
+    if (h) {
+      const sig = dir > 0 ? Math.floor(h.ini + EPS) + 1 : Math.ceil(h.ini - EPS) - 1;
+      if (sig >= h.desde - EPS && sig < h.fin - EPS) { ed.rs = { ini: sig }; pintar(); actualizarPanel(); return; }
+    }
+  }
   let i = idxDe(ed.key);
-  i = i < 0 ? (dir > 0 ? 0 : l.length - 1) : Math.max(0, Math.min(l.length - 1, i + dir));
+  if (i < 0 && ed.rs) {   // desde un silencio: la nota siguiente o anterior a ese punto
+    const ini = ed.rs.ini;
+    i = dir > 0 ? l.findIndex((n) => n.start >= ini - EPS) : (() => { let r = -1; l.forEach((n, j) => { if (n.end <= ini + EPS) r = j; }); return r; })();
+    if (i < 0) i = dir > 0 ? l.length - 1 : 0;
+  } else {
+    i = i < 0 ? (dir > 0 ? 0 : l.length - 1) : Math.max(0, Math.min(l.length - 1, i + dir));
+  }
   elegir(l[i].key, true);
   const pieza = P.piezas().find((p) => p.noteIdx === i);
   if (pieza && pieza.g.scrollIntoView) pieza.g.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -201,8 +269,20 @@ function pisadas(idx, nuevoFin) {
   for (let j = idx + 1; j < l.length && l[j].start < nuevoFin - EPS; j++) out.push(j);
   return out;
 }
+// Hueco libre de la voz que contiene la posición ini (null si ahí suena una nota): { ini, desde, fin }.
+function huecoEn(ini) {
+  const total = S().song.total;
+  let fin = total, desde = 0;
+  for (const n of linea()) {
+    if (n.start <= ini + EPS && n.end > ini + EPS) return null;
+    if (n.start > ini + EPS) fin = Math.min(fin, n.start);
+    else desde = Math.max(desde, n.end);
+  }
+  return ini < total - EPS ? { ini, desde, fin } : null;
+}
 
 async function cambiarDuracion(L) {
+  if (ed.rs) { insertarNota(L); return; }
   const l = linea(), idx = idxDe(ed.key);
   if (idx < 0) return;
   const n = l[idx], nuevoFin = n.start + L;
@@ -237,19 +317,74 @@ function cambiarAltura(d) {
   if (!P.reproduciendo()) P.previsualizar(m);
 }
 
-function deshacer() { if (ed.pos > 0) { ed.pos--; ed.ov = clonar(ed.hist[ed.pos]); refrescar(); } }
-function rehacer() { if (ed.pos < ed.hist.length - 1) { ed.pos++; ed.ov = clonar(ed.hist[ed.pos]); refrescar(); } }
-function reiniciarCambios() { ed.ov = {}; ed.hist = [{}]; ed.pos = 0; ed.key = null; reconstruirSiHay(); }
-function reconstruirSiHay() { if (P && S().song && S().song.voices) { reconstruir(); } }
+// Escribir una nota en el silencio elegido: empieza donde empieza el silencio y no puede pasar del siguiente sonido.
+function insertarNota(L) {
+  const v = P.voz(), h = ed.rs && huecoEn(ed.rs.ini);
+  if (!h) return;
+  if (v.t === undefined) { aviso('Esta voz no se puede editar.'); return; }
+  if (h.ini + L > h.fin + EPS) { aviso('No cabe: el silencio es más corto que esa duración.'); return; }
+  const l = linea();
+  let prev = null, sig = null;
+  l.forEach((n) => { if (n.end <= h.ini + EPS && (!prev || n.end >= prev.end)) prev = n; if (n.start >= h.ini - EPS && !sig) sig = n; });
+  const midi = prev ? prev.midi : sig ? sig.midi : Math.round(v.med);   // empieza con la altura de la nota vecina
+  const vels = v.base.map((b) => b.vel).filter(Boolean).sort((a, b) => a - b);
+  const key = '+' + (++ed.nuevoId);
+  aplicar({ [key]: { nuevo: true, t: v.t, ch: v.ch, midi, start: h.ini, end: h.ini + L, vel: vels.length ? vels[vels.length >> 1] : 80 } });
+  elegir(key, true);
+}
+
+// La nota deja de sonar y en su lugar queda un silencio, que se puede elegir para escribir otra nota.
+function convertirEnSilencio() {
+  const n = linea()[idxDe(ed.key)];
+  if (!n) return;
+  aplicar({ [n.key]: { del: true } });
+  ed.key = null;
+  elegirSilencio(n.start);
+  if (!ed.rs) { pintar(); actualizarPanel(); }
+}
+
+function agregarCompas() {
+  if (ed.extra >= MAX_COMPASES_EXTRA) { aviso('Máximo ' + MAX_COMPASES_EXTRA + ' compases añadidos.'); return; }
+  ed.extra++; guardarHist(); refrescar();
+}
+function quitarCompas() {
+  if (ed.extra <= 0) { aviso('Solo se pueden quitar los compases que añadiste.'); return; }
+  const song = S().song, inicio = (song.nMeas - 1) * song.mb;
+  if (song.voices.some((v) => v.notes.some((n) => n.end > inicio + EPS))) { aviso('El último compás tiene notas: quítalas antes de borrar el compás.'); return; }
+  ed.extra--; guardarHist(); refrescar();
+}
+
+function cambiarLetra(key, texto) {
+  const n = linea()[idxDe(key)];
+  if (!n) return false;
+  const t = String(texto).replace(/[\r\n]+/g, ' ').slice(0, 60);
+  if ((n.letra || '') === t) return false;
+  aplicar({ [n.key]: { letra: t } });
+  return true;
+}
+
+function deshacer() { if (ed.pos > 0) { ed.pos--; restaurar(ed.hist[ed.pos]); } }
+function rehacer() { if (ed.pos < ed.hist.length - 1) { ed.pos++; restaurar(ed.hist[ed.pos]); } }
+function reiniciarCambios() {
+  ed.ov = {}; ed.extra = 0; ed.hist = [{ ov: {}, extra: 0 }]; ed.pos = 0; ed.key = null; ed.rs = null;
+  if (P && S().song && S().song.voices) reconstruir();
+}
 
 async function descartar() {
   if (!cambios()) return;
-  const ok = await confirmar({ title: '¿Descartar los cambios?', text: `Se perderán ${cambios()} nota(s) modificada(s) desde que abriste la pieza.`, confirmButtonText: 'Descartar', cancelButtonText: 'Seguir editando' });
+  const ok = await confirmar({ title: '¿Descartar los cambios?', text: `Se perderán ${cambios()} cambio(s) desde que abriste la pieza.`, confirmButtonText: 'Descartar', cancelButtonText: 'Seguir editando' });
   if (!ok) return;
   reiniciarCambios(); P.render();
 }
 
 /* ------------------------------------------------------------------ guardar versión */
+function textoResumen(r) {
+  return [
+    r.duraciones && `${r.duraciones} duración(es)`, r.alturas && `${r.alturas} altura(s)`,
+    r.agregadas && `${r.agregadas} nota(s) nueva(s)`, r.sustituidas && `${r.sustituidas} nota(s) quitada(s)`,
+    r.letras && `${r.letras} letra(s)`, r.compases && `${r.compases} compás(es) añadido(s)`
+  ].filter(Boolean).join(' · ');
+}
 async function guardarVersion() {
   const r = resumen();
   if (!r.total || ed.guardando) return;
@@ -257,19 +392,20 @@ async function guardarVersion() {
   btn.disabled = true;
   try {
     const prop = await ejecutar('proximaVersion', ed.libId);
-    const detalle = [r.duraciones && `${r.duraciones} duración(es)`, r.alturas && `${r.alturas} altura(s)`, r.sustituidas && `${r.sustituidas} nota(s) sustituida(s)`].filter(Boolean).join(' · ');
     const ok = await confirmar({
       icon: 'question', title: 'Guardar como nueva versión',
-      html: `Se guardará como <b>${esc(prop.nombre)}</b> en la Biblioteca.<br><br>${r.total} nota(s) modificada(s): ${esc(detalle)}.<br>El archivo original no se toca.`,
+      html: `Se guardará como <b>${esc(prop.nombre)}</b> en la Biblioteca.<br><br>${r.total} cambio(s): ${esc(textoResumen(r))}.<br>El archivo original no se toca.`,
       confirmButtonText: 'Guardar versión', cancelButtonText: 'Cancelar'
     });
     if (!ok) return;
     ed.guardando = true;
-    const bytes = escribirMidi(S().song.raw, ed.ov);
+    const song = S().song, compases = song.nMeas;
+    const bytes = escribirMidi(song.raw, ed.ov, ed.extra, song.total);
     const meta = window.Ensayo.analizar(bytes.buffer);
+    meta.compases = compases;   // incluye los compases de silencio añadidos
     const it = await ejecutar('guardarVersion', ed.libId, aBase64(bytes), meta, r);
     // Se abre la versión recién guardada: ahí se podrá seguir editando para crear la siguiente.
-    window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id);
+    window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases);
     toastExito('Guardado como ' + it.titulo);
   } catch (e) {
     toastError((e && e.message ? String(e.message).replace(/^(Error|Exception):\s*/, '') : 'No se pudo guardar la versión.'));
@@ -285,17 +421,21 @@ function pintar() {
   if (!P || !ed.activo) return;
   const l = linea();
   P.piezas().forEach((p) => {
-    const n = p.noteIdx >= 0 ? l[p.noteIdx] : null;
-    if (!n) return;
-    p.g.classList.toggle('editsel', n.key === ed.key);
-    p.g.classList.toggle('mod', !!ed.ov[n.key]);
+    if (p.noteIdx >= 0) {
+      const n = l[p.noteIdx];
+      if (!n) return;
+      p.g.classList.toggle('editsel', n.key === ed.key);
+      p.g.classList.toggle('mod', !!ed.ov[n.key]);
+    } else if (p.rs) {
+      p.g.classList.toggle('editsel', !!ed.rs && ed.rs.ini >= p.rs.ini - EPS && ed.rs.ini < p.rs.ini + p.rs.len - EPS);
+    }
   });
 }
 
-function compasYTiempo(n) {
+function compasYTiempo(inicio) {
   const mb = S().song.mb;
-  const c = Math.floor(n.start / mb + EPS), t = n.start - c * mb;
-  return `compás ${c + 1}, tiempo ${Math.round((t + 1) * 100) / 100}`;
+  const c = Math.floor(inicio / mb + EPS), t = inicio - c * mb;
+  return `compás ${c + 1}, tiempo ${num(t + 1)}`;
 }
 
 function actualizarPanel() {
@@ -303,7 +443,7 @@ function actualizarPanel() {
   const btn = $('#btnEditar'), panel = $('#panel-edicion');
   const puede = puedeEditar();
   btn.disabled = !puede && !ed.activo;
-  btn.title = puede ? 'Editar la duración y la altura de las notas' : 'Abre una pieza de la Biblioteca para poder editarla';
+  btn.title = puede ? 'Editar notas, silencios y letra' : 'Abre una pieza de la Biblioteca para poder editarla';
   btn.setAttribute('aria-pressed', ed.activo);
   btn.classList.toggle('btn-primario', ed.activo);
   btn.querySelector('span').textContent = ed.activo ? 'Terminar edición' : 'Editar';
@@ -311,29 +451,56 @@ function actualizarPanel() {
   if (!ed.activo) return;
 
   const l = linea(), i = idxDe(ed.key), n = i >= 0 ? l[i] : null, r = resumen();
+  const h = !n && ed.rs ? huecoEn(ed.rs.ini) : null;
+  if (ed.rs && !h) ed.rs = null;   // ese silencio ya no existe (se ocupó o la pieza cambió)
   const b = n ? ed.base.get(n.key) : null;
-  $('#ed-nota').textContent = n ? `${nombreNota(n.midi)} · ${nombreDur(n.end - n.start)}` : 'Toca una nota de la partitura para editarla';
-  let sub = n ? compasYTiempo(n) : `Voz: ${P.nombreVoz()}`;
-  if (n && b && ed.ov[n.key]) sub += ` · modificada (original: ${nombreNota(b.midi)} · ${nombreDur(b.end - b.start)})`;
-  $('#ed-sub').textContent = sub;
+
+  if (n) {
+    $('#ed-nota').textContent = `${nombreNota(n.midi)} · ${nombreDur(n.end - n.start)}`;
+    let sub = compasYTiempo(n.start);
+    if (b && ed.ov[n.key]) sub += ` · modificada (original: ${nombreNota(b.midi)} · ${nombreDur(b.end - b.start)})`;
+    else if (!b) sub += ' · nota nueva';
+    $('#ed-sub').textContent = sub;
+  } else if (h) {
+    $('#ed-nota').textContent = 'Silencio · ' + compasYTiempo(h.ini);
+    $('#ed-sub').textContent = `Hueco libre de ${num(h.fin - h.ini)} tiempo(s). Elige una duración para escribir una nota ahí; con ◀ ▶ mueves el punto de inserción.`;
+  } else {
+    $('#ed-nota').textContent = 'Toca una nota o un silencio de la partitura';
+    $('#ed-sub').textContent = `Voz: ${P.nombreVoz()}`;
+  }
+  $('#ed-dur-etiqueta').textContent = h ? 'Escribir una nota de…' : 'Duración';
 
   const total = S().song.total;
   document.querySelectorAll('#ed-durs button').forEach((x) => {
-    const L = +x.dataset.l;
-    const largo = n ? n.end - n.start : 0;
-    const fin = n ? n.start + L : 0;
+    const L = +x.dataset.l, base = `${nombreDur(L)} (${L} tiempo${L === 1 ? '' : 's'})`;
+    if (h) {
+      const cabe = h.ini + L <= h.fin + EPS;
+      x.classList.remove('activo', 'choca');
+      x.disabled = !cabe;
+      x.title = base + (cabe ? ' · escribe una nota aquí' : ' · no cabe en este silencio');
+      return;
+    }
+    const largo = n ? n.end - n.start : 0, fin = n ? n.start + L : 0;
     x.classList.toggle('activo', !!n && Math.abs(largo - L) < EPS);
     x.disabled = !n || fin > total + EPS;
     const pisa = !!n && fin > n.end + EPS && pisadas(i, fin).length > 0;
     x.classList.toggle('choca', pisa);
-    x.title = `${nombreDur(L)} (${L} tiempo${L === 1 ? '' : 's'})` + (n && fin > total + EPS ? ' · no cabe antes del final' : pisa ? ' · pisaría la nota siguiente' : '');
+    x.title = base + (n && fin > total + EPS ? ' · no cabe antes del final' : pisa ? ' · pisaría la nota siguiente' : '');
   });
-  ['ed-oct-bajar', 'ed-semi-bajar', 'ed-semi-subir', 'ed-oct-subir'].forEach((id) => { $('#' + id).disabled = !n; });
+  ['ed-oct-bajar', 'ed-semi-bajar', 'ed-semi-subir', 'ed-oct-subir', 'ed-silencio'].forEach((id) => { $('#' + id).disabled = !n; });
   $('#ed-prev').disabled = !l.length; $('#ed-next').disabled = !l.length;
   $('#ed-deshacer').disabled = ed.pos === 0; $('#ed-rehacer').disabled = ed.pos >= ed.hist.length - 1;
   $('#ed-descartar').disabled = !r.total;
   $('#ed-guardar').disabled = !r.total || ed.guardando;
+  $('#ed-comp-menos').disabled = ed.extra === 0;
   $('#ed-contador').textContent = r.total ? String(r.total) : '';
+
+  const inp = $('#ed-letra');
+  inp.disabled = !n;
+  if (document.activeElement !== inp || inp.dataset.key !== (ed.key || '')) {   // no pisar lo que se está escribiendo
+    inp.value = n ? (n.letra || '') : '';
+    inp.dataset.key = ed.key || '';
+  }
   $('#ed-aviso').textContent = polifonica(P.voz())
     ? 'Esta voz tiene notas simultáneas (divisi): solo se editan las notas que ves en la partitura; las demás no se tocan.' : '';
 }
@@ -347,7 +514,7 @@ async function activar(si) {
     document.body.classList.add('modo-edicion');
     P.render(); actualizarPanel();
   } else {
-    if (cambios() && !(await confirmar({ title: 'Hay cambios sin guardar', text: `Tienes ${cambios()} nota(s) modificada(s) que todavía no están en ninguna versión.`, confirmButtonText: 'Descartar y salir', cancelButtonText: 'Seguir editando' }))) return;
+    if (cambios() && !(await confirmar({ title: 'Hay cambios sin guardar', text: `Tienes ${cambios()} cambio(s) que todavía no están en ninguna versión.`, confirmButtonText: 'Descartar y salir', cancelButtonText: 'Seguir editando' }))) return;
     reiniciarCambios();
     ed.activo = false;
     document.body.classList.remove('modo-edicion');
@@ -358,22 +525,24 @@ async function activar(si) {
 // Se llama antes de cargar otra pieza: pide confirmación si hay cambios sin guardar.
 async function confirmarDescarte() {
   if (!cambios()) return true;
-  const ok = await confirmar({ title: 'Hay cambios sin guardar', text: `Si abres otra pieza se perderán ${cambios()} nota(s) modificada(s).`, confirmButtonText: 'Descartar y abrir', cancelButtonText: 'Quedarme aquí' });
-  return ok;
+  return confirmar({ title: 'Hay cambios sin guardar', text: `Si abres otra pieza se perderán ${cambios()} cambio(s).`, confirmButtonText: 'Descartar y abrir', cancelButtonText: 'Quedarme aquí' });
 }
 
-function alClicNota(pn) {
+function alClicNota(pn, rs) {
   if (!ed.activo) return false;
   if (pn) {
     const n = linea()[+pn.getAttribute('data-note')];
     if (n && n.key) elegir(n.key, true);
+  } else if (rs) {
+    elegirSilencio(+rs.getAttribute('data-rs'));
   }
   return true;   // en modo edición el clic no elige tramos
 }
 function alCargar(song, key) {
   ed.activo = false; document.body.classList.remove('modo-edicion');
-  ed.ov = {}; ed.hist = [{}]; ed.pos = 0; ed.key = null;
+  ed.ov = {}; ed.extra = 0; ed.hist = [{ ov: {}, extra: 0 }]; ed.pos = 0; ed.key = null; ed.rs = null; ed.nuevoId = 0;
   ed.libId = key && key.indexOf('lib|') === 0 ? key.slice(4) : null;
+  ed.nMeasBase = song.nMeas;
   ed.base = new Map();
   song.voices.forEach((v) => { if (v.base) v.base.forEach((b) => ed.base.set(b.key, b)); });
   $('#panel-edicion').classList.add('oculto');
@@ -387,7 +556,6 @@ function init() {
   P.hooks.alClicNota = alClicNota;
   P.hooks.alCargar = alCargar;
 
-  // botones de duración
   const cont = $('#ed-durs');
   DURACIONES.forEach((d) => {
     const b = document.createElement('button');
@@ -403,20 +571,36 @@ function init() {
   $('#ed-oct-subir').addEventListener('click', () => cambiarAltura(12));
   $('#ed-prev').addEventListener('click', () => vecina(-1));
   $('#ed-next').addEventListener('click', () => vecina(1));
+  $('#ed-silencio').addEventListener('click', convertirEnSilencio);
+  $('#ed-comp-mas').addEventListener('click', agregarCompas);
+  $('#ed-comp-menos').addEventListener('click', quitarCompas);
   $('#ed-deshacer').addEventListener('click', deshacer);
   $('#ed-rehacer').addEventListener('click', rehacer);
   $('#ed-descartar').addEventListener('click', descartar);
   $('#ed-guardar').addEventListener('click', guardarVersion);
   $('#voice').addEventListener('change', () => setTimeout(actualizarPanel, 0));
 
+  // Letra: se guarda al salir del campo; Enter o Tab pasan a la nota siguiente (Mayús+Tab, a la anterior) sin perder el foco.
+  const inp = $('#ed-letra');
+  inp.addEventListener('change', () => { cambiarLetra(inp.dataset.key, inp.value); });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'Tab') {
+      e.preventDefault();
+      cambiarLetra(inp.dataset.key, inp.value);
+      vecina(e.shiftKey ? -1 : 1);
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    } else if (e.key === 'Escape') { inp.blur(); }
+  });
+
   addEventListener('keydown', (e) => {
     if (!ed.activo || $('#panel-ensayo').classList.contains('oculto') || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
-    if (document.querySelector('.swal2-container')) return;
+    if (document.querySelector('.swal2-popup:not(.swal2-toast)')) return;
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? rehacer() : deshacer(); }
     else if (ctrl && e.key.toLowerCase() === 'y') { e.preventDefault(); rehacer(); }
     else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { if (ed.key) { e.preventDefault(); cambiarAltura((e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 12 : 1)); } }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); vecina(e.key === 'ArrowRight' ? 1 : -1); }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && ed.key) { e.preventDefault(); convertirEnSilencio(); }
   });
   addEventListener('beforeunload', (e) => { if (cambios()) { e.preventDefault(); e.returnValue = ''; } });
   refrescarIconos();

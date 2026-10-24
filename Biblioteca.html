@@ -67,7 +67,7 @@ function filaItem(it) {
     try {
       if (!window.Ensayo) throw new Error('El módulo de ensayo no está disponible. Recarga la página.');
       const r = await ejecutar('obtenerMidi', it.id);
-      window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id);
+      window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id, it.meta && it.meta.compases);
       mostrarPanel('ensayo');
     } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
     finally { b.disabled = false; etiqueta(); refrescarIconos(); }
