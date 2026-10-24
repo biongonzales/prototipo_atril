@@ -317,6 +317,7 @@ function renderScore() {
   let prevTie = null;
 
   lines.forEach((ms, li) => {
+    const lyrics = [];
     const extraFirst = firstExtra(ms[0]);
     const sum = ms.reduce((a, mi) => a + base[mi], 0) + extraFirst;
     let f = avail / sum; if (li === lines.length - 1) f = Math.min(f, 1.35); f = Math.max(f, 0.6);
@@ -357,11 +358,6 @@ function renderScore() {
         const n = new VF.StaveNote({ keys, duration: dur, clef: cfg.vf, auto_stem: true });
         if (it.dots) VF.Dot.buildAndAttach([n], { all: true });
         if (acc) n.addModifier(new VF.Accidental(acc), 0);
-        if (it.letra) {
-          const an = new VF.Annotation(it.letra).setFont('Outfit, system-ui, sans-serif', 13, 'normal')
-            .setVerticalJustification(VF.Annotation.VerticalJustify.BOTTOM);
-          n.addModifier(an, 0);
-        }
         ticks.push(n); metas.push(it);
       });
       const voice = new VF.Voice({ num_beats: ts.num, beat_value: ts.den }).setMode(VF.Voice.Mode.SOFT);
@@ -375,6 +371,11 @@ function renderScore() {
         const g = ctx.openGroup('pn'); g.classList.add('pn');
         n.setContext(ctx).draw();
         ctx.closeGroup();
+        if (it.letra) {
+          let pie = stave.getBottomLineY();
+          try { const b = g.getBBox(); pie = Math.max(pie, b.y + b.height); } catch (e) { /* sin bbox */ }
+          lyrics.push({ txt: it.letra, x: (n.getNoteHeadBeginX() + n.getNoteHeadEndX()) / 2, pie });
+        }
         const piece = { g, noteIdx: it.rest ? -1 : it.noteIdx, sys: li, rs: it.rest ? { ini: it.ini, len: it.len } : null };
         try {
           const bb = g.getBBox(), r = document.createElementNS(NS, 'rect');
@@ -405,6 +406,18 @@ function renderScore() {
       });
       x += w;
     });
+    // La letra de todo el sistema va en una misma línea, por debajo de la nota más baja.
+    if (lyrics.length) {
+      const base = Math.max(...lyrics.map((l) => l.pie)) + 16;
+      lyrics.forEach((l) => {
+        const t = document.createElementNS(NS, 'text');
+        t.setAttribute('class', 'letra'); t.setAttribute('x', l.x); t.setAttribute('y', base);
+        t.setAttribute('text-anchor', 'middle'); t.setAttribute('pointer-events', 'none');
+        t.setAttribute('font-family', 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
+        t.textContent = l.txt;
+        svg.appendChild(t);
+      });
+    }
   });
   host.querySelector('svg').addEventListener('click', onScoreClick);
   applySelection();
