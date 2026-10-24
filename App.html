@@ -1,0 +1,150 @@
+<script>
+  /* ============================================================
+     Base de la app: helpers genéricos, tema claro/oscuro, sidebar
+     colapsable/móvil y cambio de panel. Mismos nombres de función
+     que la plantilla base para poder compararlos.
+     La lógica de la partitura y el audio vive en Ensayo.html.
+     ============================================================ */
+
+  const $ = function (sel) { return document.querySelector(sel); };
+
+  function crearIconoLucide(nombre) {
+    const i = document.createElement('i');
+    i.setAttribute('data-lucide', nombre);
+    return i;
+  }
+
+  function refrescarIconos() {
+    if (window.lucide && typeof lucide.createIcons === 'function') lucide.createIcons();
+  }
+
+  /* ---------- Notificaciones (SweetAlert2) ---------- */
+
+  function toastBase(icono, titulo) {
+    if (!window.Swal) return Promise.resolve();
+    return Swal.fire({
+      icon: icono,
+      title: titulo,
+      toast: true,
+      position: 'top-end',
+      showConfirmButton: false,
+      timer: 3200,
+      timerProgressBar: true
+    });
+  }
+
+  function toastExito(mensaje) { return toastBase('success', mensaje); }
+  function toastError(mensaje) { return toastBase('error', mensaje); }
+
+  /* ---------- Comunicación con el backend (.gs) ---------- */
+
+  function ejecutar(nombreFn) {
+    const args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve, reject) {
+      if (!(window.google && google.script && google.script.run)) {
+        reject(new Error('Sin conexión con el servidor de Apps Script.'));
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(reject)[nombreFn].apply(null, args);
+    });
+  }
+
+  function mostrarCargando(mostrar) {
+    $('#cargando').classList.toggle('oculto', !mostrar);
+  }
+
+  /* ---------- Tema claro / oscuro ---------- */
+
+  // El tema se guarda en el servidor (UserProperties) porque dentro del iframe de
+  // Apps Script localStorage puede fallar. Mientras llega la respuesta se usa el
+  // último valor local o, si no hay, el del sistema.
+  function aplicarTema(tema, guardar) {
+    document.documentElement.setAttribute('data-theme', tema);
+    document.documentElement.setAttribute('data-bs-theme', tema);
+    const btn = $('#btn-tema-topbar');
+    if (btn) {
+      btn.innerHTML = '';
+      btn.appendChild(crearIconoLucide(tema === 'dark' ? 'sun' : 'moon'));
+      btn.title = tema === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro';
+    }
+    refrescarIconos();
+    if (!guardar) return;
+    try { localStorage.setItem('ensayo_tema', tema); } catch (e) { /* almacenamiento no disponible */ }
+    ejecutar('savePrefs', { tema: tema }).catch(function () { /* se reintenta en el próximo cambio */ });
+  }
+
+  function alternarTema() {
+    const actual = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    aplicarTema(actual === 'dark' ? 'light' : 'dark', true);
+  }
+
+  function iniciarTema() {
+    let inicial = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    try { inicial = localStorage.getItem('ensayo_tema') || inicial; } catch (e) { /* almacenamiento no disponible */ }
+    aplicarTema(inicial, false);
+    ejecutar('getPrefs').then(function (p) {
+      if (p && (p.tema === 'dark' || p.tema === 'light')) aplicarTema(p.tema, false);
+    }).catch(function () { /* se queda con el tema local */ });
+  }
+
+  /* ---------- Sidebar colapsable y cajón móvil ---------- */
+
+  // En escritorio el botón alterna entre sidebar ancha y solo íconos. En móvil la
+  // sidebar es un cajón que entra por encima del contenido.
+  const SIDEBAR_MOVIL = '(max-width: 900px)';
+
+  function esVistaMovil() {
+    return window.matchMedia(SIDEBAR_MOVIL).matches;
+  }
+
+  function cerrarSidebarMovil() {
+    $('#vista-app').classList.remove('sidebar-abierto');
+  }
+
+  function alternarSidebar() {
+    const app = $('#vista-app');
+    if (esVistaMovil()) app.classList.toggle('sidebar-abierto');
+    else app.classList.toggle('sidebar-colapsado');
+  }
+
+  /* ---------- Cambio de panel ---------- */
+
+  // Una sola lista: cada panel necesita <section id="panel-xxx"> y <button id="btn-xxx">.
+  const PANELES = ['ensayo', 'guia'];
+
+  function mostrarPanel(nombre) {
+    PANELES.forEach(function (p) {
+      $('#panel-' + p).classList.toggle('oculto', p !== nombre);
+      const btn = $('#btn-' + p);
+      btn.classList.toggle('activo', p === nombre);
+      if (p === nombre) btn.setAttribute('aria-current', 'page'); else btn.removeAttribute('aria-current');
+    });
+    // La barra de reproducción solo existe en el ensayo; al salir se corta el audio.
+    $('#barra-reproduccion').classList.toggle('oculto', nombre !== 'ensayo');
+    if (window.Ensayo) {
+      if (nombre === 'ensayo') window.Ensayo.refrescar(); else window.Ensayo.detener();
+    }
+    window.scrollTo(0, 0);
+    if (esVistaMovil()) cerrarSidebarMovil();
+  }
+
+  /* ---------- Arranque ---------- */
+
+  document.addEventListener('DOMContentLoaded', function () {
+    iniciarTema();
+    $('#btn-tema-topbar').addEventListener('click', alternarTema);
+    $('#btn-toggle-sidebar').addEventListener('click', alternarSidebar);
+    $('#sidebar-backdrop').addEventListener('click', cerrarSidebarMovil);
+    PANELES.forEach(function (p) {
+      $('#btn-' + p).addEventListener('click', function () { mostrarPanel(p); });
+    });
+
+    refrescarIconos();
+
+    ejecutar('getUsuario').then(function (correo) {
+      if (correo) $('#usuario-nombre').textContent = correo;
+    }).catch(function () { /* se queda con «Mi cuenta» */ });
+  });
+</script>
