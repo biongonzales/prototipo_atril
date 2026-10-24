@@ -112,7 +112,7 @@
   /* ---------- Cambio de panel ---------- */
 
   // Una sola lista: cada panel necesita <section id="panel-xxx"> y <button id="btn-xxx">.
-  const PANELES = ['ensayo', 'guia'];
+  const PANELES = ['biblioteca', 'ensayo', 'guia'];
 
   function mostrarPanel(nombre) {
     PANELES.forEach(function (p) {
@@ -126,6 +126,7 @@
     if (window.Ensayo) {
       if (nombre === 'ensayo') window.Ensayo.refrescar(); else window.Ensayo.detener();
     }
+    if (nombre === 'biblioteca' && window.Biblioteca) window.Biblioteca.mostrar();
     window.scrollTo(0, 0);
     if (esVistaMovil()) cerrarSidebarMovil();
   }

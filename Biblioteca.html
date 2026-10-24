@@ -1,0 +1,208 @@
+<script>
+/* ============================================================
+   Biblioteca de MIDIs: tabla de piezas guardadas en la carpeta MIDIS de Drive,
+   subida con reconocimiento automático (compás, tempo, compases y voces) y
+   apertura de una pieza en la vista de Ensayo.
+   El análisis del MIDI lo hace el cliente (Ensayo.analizar); el servidor solo guarda.
+   ============================================================ */
+(() => {
+'use strict';
+const $ = (s) => document.querySelector(s);
+const MAX_BYTES = 5 * 1024 * 1024;
+const NO_PERMITIDOS = /[^A-ZÁÉÍÓÚÜÑ0-9 \-_().,'#&]/g;
+
+const est = { items: [], cargado: false, cargando: false, error: '', filtro: '', pendiente: null, guardando: false, foco: null };
+
+/* ------------------------------------------------------------------ utilidades */
+function el(tag, clase, texto) {
+  const e = document.createElement(tag);
+  if (clase) e.className = clase;
+  if (texto !== undefined) e.textContent = texto;
+  return e;
+}
+function aBase64(buf) {
+  const b = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function deBase64(b64) {
+  const s = atob(b64), u = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  return u.buffer;
+}
+const fechaCorta = (iso) => { const d = new Date(iso); return isNaN(d) ? '–' : d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }); };
+const mensajeDe = (e, porDefecto) => (e && e.message ? String(e.message).replace(/^(Error|Exception):\s*/, '') : porDefecto);
+
+/* ------------------------------------------------------------------ tabla */
+function celdaMensaje(texto, accion) {
+  const tr = el('tr'), td = el('td', 'tabla-mensaje', texto);
+  td.colSpan = 7;
+  if (accion) { const b = el('button', 'btn btn-chico', accion.texto); b.type = 'button'; b.addEventListener('click', accion.fn); td.appendChild(document.createElement('br')); td.appendChild(b); }
+  tr.appendChild(td);
+  return tr;
+}
+
+function filaItem(it) {
+  const tr = el('tr'), m = it.meta;
+  tr.appendChild(el('td', 'tabla-col-titulo', it.titulo));
+  tr.appendChild(el('td', '', m && m.compas ? m.compas : '–'));
+  tr.appendChild(el('td', '', m && m.bpm ? `♩ = ${m.bpm}` : '–'));
+  tr.appendChild(el('td', '', m && m.compases ? String(m.compases) : '–'));
+  const voces = el('td', '', m && m.voces ? String(m.voces.length) : '–');
+  if (m && m.voces && m.voces.length) voces.title = m.voces.join(', ');
+  tr.appendChild(voces);
+  tr.appendChild(el('td', '', fechaCorta(it.fecha)));
+  const acc = el('td', 'tabla-col-acciones');
+  const b = el('button', 'btn btn-primario btn-chico');
+  b.type = 'button'; b.title = 'Ensayar ' + it.titulo; b.setAttribute('aria-label', 'Ensayar ' + it.titulo);
+  const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, ' Ensayo'); refrescarIconos(); };
+  etiqueta();
+  b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = 'Abriendo…';
+    try {
+      if (!window.Ensayo) throw new Error('El módulo de ensayo no está disponible. Recarga la página.');
+      const r = await ejecutar('obtenerMidi', it.id);
+      window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id);
+      mostrarPanel('ensayo');
+    } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
+    finally { b.disabled = false; etiqueta(); }
+  });
+  acc.appendChild(b); tr.appendChild(acc);
+  return tr;
+}
+
+function renderTabla() {
+  const cuerpo = $('#bib-cuerpo'); cuerpo.innerHTML = '';
+  const q = est.filtro.trim().toUpperCase();
+  const visibles = est.items.filter((x) => !q || x.titulo.toUpperCase().includes(q));
+  $('#bib-conteo').textContent = est.cargado ? `· ${visibles.length}${q ? ' de ' + est.items.length : ''}` : '';
+  if (est.cargando && !est.cargado) cuerpo.appendChild(celdaMensaje('Cargando biblioteca…'));
+  else if (est.error) cuerpo.appendChild(celdaMensaje(est.error, { texto: 'Reintentar', fn: () => cargarLista() }));
+  else if (!est.items.length) cuerpo.appendChild(celdaMensaje('Todavía no hay MIDIs. Sube el primero con «Subir MIDI».'));
+  else if (!visibles.length) cuerpo.appendChild(celdaMensaje('Ningún título coincide con la búsqueda.'));
+  else visibles.forEach((it) => cuerpo.appendChild(filaItem(it)));
+}
+
+async function cargarLista() {
+  est.cargando = true; est.error = '';
+  renderTabla();
+  try {
+    est.items = await ejecutar('listarMidis');
+    est.cargado = true;
+  } catch (e) {
+    // Si ya había una lista, se conserva y solo se avisa; el error a pantalla completa es para la primera carga.
+    if (est.cargado) toastError('No se pudo actualizar la lista. ' + mensajeDe(e, ''));
+    else est.error = 'No se pudo cargar la biblioteca. ' + mensajeDe(e, '');
+  } finally {
+    est.cargando = false; renderTabla();
+  }
+}
+
+/* ------------------------------------------------------------------ modal de subida */
+const titulosExistentes = () => new Set(est.items.map((x) => x.titulo.toUpperCase()));
+const tituloLimpio = () => $('#midi-titulo').value.replace(/\s+/g, ' ').trim();
+
+function validarTitulo() {
+  const t = tituloLimpio(), dup = t && titulosExistentes().has(t);
+  $('#modal-midi-error').textContent = dup ? `Ya existe un MIDI con el título «${t}».` : '';
+  $('#modal-midi-guardar').disabled = !t || dup || est.guardando;
+}
+
+function abrirModal(archivo, buf, resumen) {
+  est.pendiente = { nombre: archivo.name, buf, resumen };
+  est.foco = document.activeElement;
+  $('#modal-midi-archivo').textContent = archivo.name;
+  $('#mm-compas').textContent = resumen.compas;
+  $('#mm-tempo').textContent = `♩ = ${resumen.bpm}`;
+  $('#mm-compases').textContent = resumen.compases;
+  $('#mm-voces-n').textContent = resumen.voces.length;
+  const caja = $('#mm-voces'); caja.innerHTML = '';
+  resumen.voces.forEach((v) => caja.appendChild(el('span', 'voz-chip', v)));
+  const input = $('#midi-titulo');
+  input.value = archivo.name.replace(/\.(mid|midi)$/i, '').toUpperCase().replace(NO_PERMITIDOS, '').slice(0, 80);
+  $('#modal-midi').classList.remove('oculto');
+  validarTitulo(); refrescarIconos();
+  input.focus(); input.select();
+}
+
+function cerrarModal() {
+  if (est.guardando) return;
+  $('#modal-midi').classList.add('oculto');
+  est.pendiente = null;
+  if (est.foco && est.foco.focus) est.foco.focus();
+}
+
+async function guardar() {
+  const p = est.pendiente, titulo = tituloLimpio();
+  if (!p || !titulo || est.guardando) return;
+  est.guardando = true;
+  const btn = $('#modal-midi-guardar'); btn.disabled = true; btn.textContent = 'Guardando…';
+  $('#modal-midi-cancelar').disabled = true; $('#modal-midi-error').textContent = '';
+  try {
+    const it = await ejecutar('guardarMidi', titulo, aBase64(p.buf), p.resumen);
+    est.items.unshift(it); est.cargado = true; est.error = '';
+    est.guardando = false;
+    cerrarModal(); renderTabla();
+    toastExito('MIDI guardado en la carpeta MIDIS');
+  } catch (e) {
+    est.guardando = false;
+    $('#modal-midi-error').textContent = mensajeDe(e, 'No se pudo guardar el MIDI.');
+  } finally {
+    est.guardando = false;
+    btn.innerHTML = '<i data-lucide="save"></i> Guardar'; refrescarIconos();
+    $('#modal-midi-cancelar').disabled = false;
+    if (est.pendiente) validarTitulo();
+  }
+}
+
+/* ------------------------------------------------------------------ subida */
+async function procesarArchivo(f) {
+  if (!f) return;
+  if (!/\.(mid|midi)$/i.test(f.name)) { toastError('Elige un archivo MIDI (.mid o .midi).'); return; }
+  if (f.size > MAX_BYTES) { toastError('El archivo supera los 5 MB.'); return; }
+  if (!window.Ensayo) { toastError('El módulo de lectura de MIDI no está disponible. Recarga la página.'); return; }
+  try {
+    const buf = await f.arrayBuffer();
+    abrirModal(f, buf, window.Ensayo.analizar(buf));
+  } catch (e) { toastError(mensajeDe(e, 'No se pudo leer el archivo MIDI.')); }
+}
+
+/* ------------------------------------------------------------------ eventos */
+$('#midi-archivo').addEventListener('change', (e) => { procesarArchivo(e.target.files[0]); e.target.value = ''; });
+$('#bib-buscar').addEventListener('input', (e) => { est.filtro = e.target.value; renderTabla(); });
+
+const zona = $('#panel-biblioteca');
+zona.addEventListener('dragover', (e) => { e.preventDefault(); $('#bib-drop').classList.add('drop-activo'); });
+['dragleave', 'drop'].forEach((n) => zona.addEventListener(n, (e) => {
+  e.preventDefault(); $('#bib-drop').classList.remove('drop-activo');
+  if (n === 'drop' && e.dataTransfer && e.dataTransfer.files[0]) procesarArchivo(e.dataTransfer.files[0]);
+}));
+
+$('#midi-titulo').addEventListener('input', (e) => {
+  const inp = e.target, pos = inp.selectionStart, antes = inp.value.length;
+  inp.value = inp.value.toUpperCase().replace(NO_PERMITIDOS, '');
+  const p = Math.max(0, pos - (antes - inp.value.length));
+  inp.setSelectionRange(p, p);
+  validarTitulo();
+});
+$('#midi-titulo').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !$('#modal-midi-guardar').disabled) { e.preventDefault(); guardar(); } });
+$('#modal-midi-guardar').addEventListener('click', guardar);
+$('#modal-midi-cancelar').addEventListener('click', cerrarModal);
+$('#modal-midi').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-midi') cerrarModal(); });
+$('#modal-midi').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); cerrarModal(); return; }
+  if (e.key !== 'Tab') return;
+  const f = [...$('#modal-midi').querySelectorAll('input, button')].filter((x) => !x.disabled);
+  if (!f.length) return;
+  const primero = f[0], ultimo = f[f.length - 1];
+  if (e.shiftKey && document.activeElement === primero) { e.preventDefault(); ultimo.focus(); }
+  else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primero.focus(); }
+});
+
+window.Biblioteca = {
+  // Se llama cada vez que se abre la vista: la primera carga la lista; después la refresca sin vaciar la tabla.
+  mostrar: () => { if (!est.cargando) cargarLista(); }
+};
+renderTabla();
+})();
+</script>

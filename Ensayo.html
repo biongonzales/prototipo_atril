@@ -683,8 +683,10 @@ async function handleFile(f) {
 }
 
 $('#file').addEventListener('change', (e) => { handleFile(e.target.files[0]); e.target.value = ''; });
-['dragover', 'dragenter'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); document.body.classList.add('drop-on'); }));
-['dragleave', 'drop'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); document.body.classList.remove('drop-on'); if (n === 'drop' && e.dataTransfer && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }));
+// Soltar un archivo solo carga el ensayo si esa vista está abierta; en la Biblioteca lo gestiona su propio código.
+const enEnsayo = () => !$('#panel-ensayo').classList.contains('oculto');
+['dragover', 'dragenter'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); if (enEnsayo()) document.body.classList.add('drop-on'); }));
+['dragleave', 'drop'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); document.body.classList.remove('drop-on'); if (n === 'drop' && enEnsayo() && e.dataTransfer && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }));
 $('#voice').addEventListener('change', (e) => { stopPlay(); state.voiceIdx = +e.target.value; state.sel = null; state.stage = 0; updateLabels(); renderScore(); persist(); });
 $('#keysel').addEventListener('change', (e) => { state.keySf = +e.target.value; renderScore(); });
 $('#play').addEventListener('click', () => (S.playing ? stopPlay() : startPlay()));
@@ -725,7 +727,14 @@ function boot() {
   window.Ensayo = {
     detener: stopPlay,
     // Al volver a la vista el contenedor pudo cambiar de ancho mientras estaba oculto.
-    refrescar: () => { const w = $('#score').clientWidth; if (state.song && w > 0 && Math.abs(w - ui.lastW) > 24) renderScore(); }
+    refrescar: () => { const w = $('#score').clientWidth; if (state.song && w > 0 && Math.abs(w - ui.lastW) > 24) renderScore(); },
+    // Lee un MIDI y devuelve lo que se reconoce de él, sin cargarlo en el ensayo (lo usa la Biblioteca).
+    analizar: (buf) => {
+      const s = buildSong(parseMidi(buf), '');
+      return { compas: `${s.ts.num}/${s.ts.den}`, bpm: s.bpm, compases: s.nMeas, voces: s.voices.map((v) => v.name) };
+    },
+    // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
+    cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave)
   };
 }
 if (document.readyState === 'loading') addEventListener('DOMContentLoaded', boot); else boot();

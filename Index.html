@@ -23,6 +23,9 @@
 
       <p class="sidebar-grupo-etiqueta texto">MENÚ</p>
 
+      <button id="btn-biblioteca" class="sidebar-item" title="Biblioteca de MIDIs">
+        <span class="icono"><i data-lucide="list-music"></i></span><span class="texto">Biblioteca</span>
+      </button>
       <button id="btn-ensayo" class="sidebar-item activo" title="Ensayo">
         <span class="icono"><i data-lucide="mic-vocal"></i></span><span class="texto">Ensayo</span>
       </button>
@@ -49,6 +52,50 @@
       </header>
 
       <main class="contenido">
+
+        <!-- ================= Biblioteca ================= -->
+        <section id="panel-biblioteca" class="panel-sin-marco panel-biblioteca oculto">
+          <div class="dash-tarjeta">
+            <div class="ensayo-cabecera">
+              <div class="ensayo-cabecera-texto">
+                <h1>Biblioteca de MIDIs</h1>
+                <p class="subtitulo">Sube un archivo MIDI y la app reconoce su compás, tempo, compases y voces. Se guarda en la carpeta MIDIS de tu Drive.</p>
+              </div>
+              <div class="ensayo-herramientas">
+                <label class="btn btn-primario" for="midi-archivo"><i data-lucide="upload"></i> Subir MIDI
+                  <input id="midi-archivo" type="file" accept=".mid,.midi,audio/midi,audio/x-midi">
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="dash-tarjeta">
+            <div class="tabla-toolbar">
+              <h2 class="dash-titulo">Piezas guardadas <span class="tabla-conteo" id="bib-conteo"></span></h2>
+              <div class="tabla-buscador">
+                <i data-lucide="search"></i>
+                <input id="bib-buscar" type="search" placeholder="Buscar por título…" aria-label="Buscar por título" autocomplete="off">
+              </div>
+            </div>
+            <div class="tabla-wrap" id="bib-drop">
+              <table class="tabla-datos">
+                <thead>
+                  <tr>
+                    <th>Título</th>
+                    <th>Compás</th>
+                    <th>Tempo</th>
+                    <th>Compases</th>
+                    <th>Voces</th>
+                    <th>Subido</th>
+                    <th class="tabla-col-acciones">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="bib-cuerpo"></tbody>
+              </table>
+            </div>
+            <p class="ayuda-score">También puedes arrastrar un archivo MIDI sobre la tabla para subirlo.</p>
+          </div>
+        </section>
 
         <!-- ================= Ensayo ================= -->
         <section id="panel-ensayo" class="panel-sin-marco panel-ensayo">
@@ -137,7 +184,8 @@
           <div class="seccion">
             <span class="seccion-etiqueta"><i data-lucide="list-checks"></i> Primeros pasos</span>
             <ol class="pasos">
-              <li><strong>Carga tu archivo.</strong> Pulsa «Cargar MIDI» o arrastra el archivo a la ventana. Sin archivo verás una pieza de ejemplo.</li>
+              <li><strong>Sube tu MIDI a la Biblioteca.</strong> Pulsa «Subir MIDI» (o arrastra el archivo a la tabla). La app reconoce el compás, el tempo, los compases y las voces; pon un título en MAYÚSCULAS y guarda. Se almacena en la carpeta MIDIS de tu Drive.</li>
+              <li><strong>Abre la pieza.</strong> En la tabla, pulsa «Ensayo» junto a la pieza. Sin ninguna abierta verás una pieza de ejemplo.</li>
               <li><strong>Elige tu voz.</strong> Se selecciona el tenor por defecto; puedes cambiarla en «Voz a practicar».</li>
               <li><strong>Marca el tramo que quieres ensayar.</strong> Toca una nota o un compás para el inicio y otra para el final.</li>
               <li><strong>Reproduce.</strong> Con «Repetir tramo» activo, el fragmento se repite hasta que pulses «Detener».</li>
@@ -213,6 +261,33 @@
     </div>
   </div>
 
+  <!-- Modal de subida: muestra lo que se reconoció del MIDI y pide el título. -->
+  <div id="modal-midi" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modal-midi-titulo">
+    <div class="modal-caja modal-caja-ancha">
+      <h2 id="modal-midi-titulo">Nuevo MIDI</h2>
+      <p class="subtitulo" id="modal-midi-archivo"></p>
+
+      <div class="modal-resumen">
+        <p><span>Compás</span><strong id="mm-compas">–</strong></p>
+        <p><span>Tempo</span><strong id="mm-tempo">–</strong></p>
+        <p><span>Cantidad de compases</span><strong id="mm-compases">–</strong></p>
+        <p><span>Voces</span><strong id="mm-voces-n">–</strong></p>
+      </div>
+      <div class="modal-voces" id="mm-voces"></div>
+
+      <label class="modal-label" for="midi-titulo">Título
+        <input id="midi-titulo" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="midi-titulo-ayuda">
+      </label>
+      <p class="modal-ayuda" id="midi-titulo-ayuda">Solo MAYÚSCULAS. Se permiten letras, números, espacios y - _ ( ) . , ' # &amp;</p>
+      <p class="error" id="modal-midi-error" role="alert"></p>
+
+      <div class="modal-acciones">
+        <button type="button" class="btn" id="modal-midi-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primario" id="modal-midi-guardar" disabled><i data-lucide="save"></i> Guardar</button>
+      </div>
+    </div>
+  </div>
+
   <div id="cargando" class="cargando oculto">
     <div class="spinner"></div>
     <p>Cargando…</p>
@@ -220,5 +295,6 @@
 
   <?!= include('App'); ?>
   <?!= include('Ensayo'); ?>
+  <?!= include('Biblioteca'); ?>
 </body>
 </html>
