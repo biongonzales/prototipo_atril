@@ -1,0 +1,509 @@
+<script>
+/* ============================================================
+   Cantar: práctica con micrófono.
+   - Detección de tono YIN propia (sin dependencias), con ventana suficiente para voces graves.
+   - Vista de juego en canvas: rollo de notas que avanza, línea con lo que cantas y las notas
+     pintadas de verde (afinado), rojo (desafinado) o gris (sin voz clara).
+   - Se sincroniza con el reproductor de Ensayo.html a través de Ensayo.puente.
+   El audio del micrófono se analiza en el dispositivo: no se graba ni se envía.
+   ============================================================ */
+(() => {
+'use strict';
+const $ = (s) => document.querySelector(s);
+const EPS = 1e-6;
+
+/* ------------------------------------------------------------------ detección de tono (YIN) */
+// W: ventana de integración; con 2048 muestras caben ≥ 3 periodos de 70 Hz incluso a 48 kHz.
+// UMBRAL: máximo de la diferencia normalizada aceptada (claridad mínima = 1 - UMBRAL).
+// RMS_MIN: por debajo de este volumen se considera silencio y ni se analiza.
+const YIN = { W: 2048, FMIN: 70, FMAX: 1100, UMBRAL: 0.2, RMS_MIN: 0.01 };
+const GRACIA_S = 0.12;   // los primeros 120 ms de cada nota no se evalúan
+
+/**
+ * Estima la frecuencia fundamental de las muestras más recientes de `buf`.
+ * Devuelve { f, claridad, rms }; f = 0 si hay silencio o no hay un tono claro.
+ */
+function yin(buf, fs, ajustes) {
+  const o = Object.assign({}, YIN, ajustes);
+  const tauMax = Math.min(Math.floor(fs / o.FMIN), buf.length - o.W - 1);
+  const tauMin = Math.max(2, Math.floor(fs / o.FMAX));
+  const off = buf.length - (o.W + tauMax);
+  if (off < 0 || tauMax <= tauMin + 2) return { f: 0, claridad: 0, rms: 0 };
+
+  let e = 0;
+  for (let j = buf.length - o.W; j < buf.length; j++) e += buf[j] * buf[j];
+  const rms = Math.sqrt(e / o.W);
+  if (rms < o.RMS_MIN) return { f: 0, claridad: 0, rms };
+
+  // 1) función de diferencia
+  const d = new Float32Array(tauMax + 1);
+  for (let tau = 1; tau <= tauMax; tau++) {
+    let s = 0;
+    for (let j = 0; j < o.W; j++) { const x = buf[off + j] - buf[off + j + tau]; s += x * x; }
+    d[tau] = s;
+  }
+  // 2) diferencia normalizada por la media acumulada
+  const cm = new Float32Array(tauMax + 1);
+  cm[0] = 1;
+  let acc = 0;
+  for (let tau = 1; tau <= tauMax; tau++) { acc += d[tau]; cm[tau] = acc > 0 ? (d[tau] * tau) / acc : 1; }
+  // 3) primer valle por debajo del umbral (se desciende hasta su mínimo local)
+  let tau = -1;
+  for (let t = tauMin; t < tauMax; t++) {
+    if (cm[t] < o.UMBRAL) { while (t + 1 < tauMax && cm[t + 1] < cm[t]) t++; tau = t; break; }
+  }
+  if (tau < 0) return { f: 0, claridad: 0, rms };
+  // 4) interpolación parabólica del mínimo
+  const a = cm[tau - 1], b = cm[tau], c = cm[tau + 1];
+  const den = a - 2 * b + c;
+  const delta = den !== 0 ? (a - c) / (2 * den) : 0;
+  const tauReal = tau + (Math.abs(delta) < 1 ? delta : 0);
+  return { f: fs / tauReal, claridad: 1 - b, rms };
+}
+
+// Retraso aproximado entre el instante «ahora» y el centro del trozo de audio que analiza YIN.
+const retrasoAnalisis = (fs) => (YIN.W + Math.floor(fs / YIN.FMIN)) / 2 / fs;
+
+/** Filtro de mediana sobre las últimas n estimaciones; los huecos (null) cuentan como ausencia. */
+function crearMediana(n) {
+  const v = [];
+  return {
+    poner(x) {
+      v.push(x);
+      if (v.length > n) v.shift();
+      const ok = v.filter((y) => y !== null).sort((p, q) => p - q);
+      if (ok.length < Math.ceil(n / 2)) return null;
+      return ok[Math.floor(ok.length / 2)];
+    },
+    reset() { v.length = 0; }
+  };
+}
+
+/* ------------------------------------------------------------------ música */
+const NOMBRES = ['DO', 'DO♯', 'RE', 'RE♯', 'MI', 'FA', 'FA♯', 'SOL', 'SOL♯', 'LA', 'LA♯', 'SI'];
+const NATURALES = [0, 2, 4, 5, 7, 9, 11];
+const nombreNota = (m) => { const r = Math.round(m); return NOMBRES[((r % 12) + 12) % 12] + (Math.floor(r / 12) - 1); };
+const hzAMidi = (f) => 69 + 12 * Math.log2(f / 440);
+// Diferencia en cents entre lo cantado (m) y la nota objetivo; con cualquier octava se pliega a [-600, 600).
+function distCents(m, objetivo, cualquierOctava) {
+  let d = (m - objetivo) * 100;
+  if (cualquierOctava) d = ((((d + 600) % 1200) + 1200) % 1200) - 600;
+  return d;
+}
+// Octava de lo cantado más cercana a la nota objetivo (para dibujar la línea sobre la nota).
+const plegar = (m, objetivo) => m - 12 * Math.round((m - objetivo) / 12);
+// Índice de la nota que suena en el pulso `beat`, o -1 si hay silencio (las notas están ordenadas).
+function notaEn(linea, beat) {
+  let lo = 0, hi = linea.length - 1, r = -1;
+  while (lo <= hi) { const mid = (lo + hi) >> 1; if (linea[mid].start <= beat + EPS) { r = mid; lo = mid + 1; } else hi = mid - 1; }
+  return r >= 0 && beat < linea[r].end - EPS ? r : -1;
+}
+
+/* ------------------------------------------------------------------ estado */
+const est = {
+  activo: false, ac: null, stream: null, src: null, an: null, buf: null, med: null,
+  raf: 0, ultimo: 0,
+  ajustes: { margen: 50, cualquierOctava: true, sinGuia: true, latenciaMs: 0 },
+  modoPrevio: null, ro: null,
+  canvas: null, g: null, w: 0, h: 0, dpr: 1, col: null, rango: { min: 55, max: 67 },
+  segs: [], trace: [], stats: new Map(), prev: null, passVista: 0,
+  sung: null, hudD: null, ultimoObjetivo: null, hudTexto: {}
+};
+const puente = () => (window.Ensayo && window.Ensayo.puente) || null;
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ------------------------------------------------------------------ ajustes (compartidos entre el aviso y la vista de juego) */
+const ctl = { margen: $('#canto-margen'), oct: $('#canto-octava'), sg: $('#canto-singuia'), lat: $('#canto-latencia'), latV: $('#canto-latencia-val') };
+function pintarAjustes() {
+  const a = est.ajustes;
+  ctl.margen.value = String(a.margen); ctl.oct.checked = a.cualquierOctava; ctl.sg.checked = a.sinGuia; ctl.lat.value = String(a.latenciaMs);
+  ctl.latV.textContent = (a.latenciaMs > 0 ? '+' : '') + a.latenciaMs + ' ms';
+  const z = $('#canto-medidor-zona');
+  z.style.left = ((100 - a.margen) / 2) + '%'; z.style.width = a.margen + '%';
+}
+function alCambiarAjustes() {
+  const sinGuiaAntes = est.ajustes.sinGuia;
+  est.ajustes = { margen: +ctl.margen.value, cualquierOctava: ctl.oct.checked, sinGuia: ctl.sg.checked, latenciaMs: +ctl.lat.value };
+  pintarAjustes();
+  const P = puente();
+  if (P) P.guardarPrefs({ canto: est.ajustes });
+  if (est.activo && P && sinGuiaAntes !== est.ajustes.sinGuia) P.setModo(est.ajustes.sinGuia ? 'sintenor' : 'tenorcoro');
+}
+[ctl.margen, ctl.oct, ctl.sg, ctl.lat].forEach((e) => e.addEventListener('input', alCambiarAjustes));
+ejecutar('getPrefs').then((p) => {
+  if (p && p.canto) { est.ajustes = Object.assign(est.ajustes, p.canto); pintarAjustes(); }
+}).catch(() => { /* se usan los ajustes predeterminados */ });
+pintarAjustes();
+
+/* ------------------------------------------------------------------ micrófono */
+function mensajeMic(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'No hay permiso para usar el micrófono. Permítelo en el navegador (icono del candado junto a la dirección) y vuelve a intentarlo. Si la app está incrustada en otra página, ábrela en su propia pestaña.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No se encontró ningún micrófono.';
+  if (n === 'NotReadableError') return 'El micrófono está en uso por otra aplicación.';
+  return (e && e.message) || 'No se pudo activar el micrófono.';
+}
+function liberarMic() {
+  try { if (est.stream) est.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* ya detenido */ }
+  try { if (est.src) est.src.disconnect(); if (est.an) est.an.disconnect(); } catch (e) { /* ya desconectado */ }
+  est.stream = est.src = est.an = null;
+}
+
+/* ------------------------------------------------------------------ aviso previo */
+function abrir() {
+  const P = puente();
+  if (!P) { toastError('El ensayo todavía no está listo.'); return; }
+  $('#canto-voz-etiqueta').textContent = P.voz();
+  $('#canto-error').textContent = '';
+  $('#modal-canto').classList.remove('oculto');
+  refrescarIconos();
+  $('#canto-empezar').focus();
+}
+function cerrarAviso() {
+  $('#modal-canto').classList.add('oculto');
+  $('#btnCantar').focus();
+}
+
+async function empezar() {
+  const P = puente(), err = $('#canto-error'), btn = $('#canto-empezar');
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Este navegador (o esta ventana incrustada) no permite usar el micrófono.');
+    const ac = P.contexto();   // se crea y reanuda dentro del gesto del usuario
+    est.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
+      video: false
+    });
+    const s = est.stream.getAudioTracks()[0].getSettings ? est.stream.getAudioTracks()[0].getSettings() : {};
+    if (s.echoCancellation || s.noiseSuppression || s.autoGainControl) {
+      toastBase('warning', 'Tu navegador no permitió desactivar el procesado de audio; la detección puede ser menos precisa.');
+    }
+    est.ac = ac;
+    est.src = ac.createMediaStreamSource(est.stream);
+    est.an = ac.createAnalyser();
+    est.an.fftSize = 4096;             // ≥ W + tauMax (con margen) para voces graves
+    est.an.smoothingTimeConstant = 0;
+    est.src.connect(est.an);           // no se conecta a la salida: así no hay eco
+    est.buf = new Float32Array(est.an.fftSize);
+    iniciarJuego();
+  } catch (e) {
+    liberarMic();
+    err.textContent = mensajeMic(e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/* ------------------------------------------------------------------ vista de juego */
+function leerColores() {
+  const oscuro = document.documentElement.getAttribute('data-theme') === 'dark';
+  est.col = {
+    fondo: css('--superficie'), rejilla: css('--slate-200'), texto: css('--slate-500'), tinta: css('--slate-900'),
+    nota: oscuro ? 'rgba(148,163,184,.30)' : 'rgba(100,116,139,.22)', notaBorde: css('--slate-300'),
+    acierto: oscuro ? '#22c55e' : '#16a34a', fallo: oscuro ? '#f87171' : '#dc2626', sinVoz: oscuro ? '#64748b' : '#94a3b8',
+    cabezal: oscuro ? '#2dd4bf' : '#0f766e'
+  };
+}
+function ajustarLienzo() {
+  const r = $('#canto-lienzo').getBoundingClientRect();
+  est.dpr = window.devicePixelRatio || 1;
+  est.w = Math.max(120, r.width); est.h = Math.max(120, r.height);
+  est.canvas.width = Math.round(est.w * est.dpr); est.canvas.height = Math.round(est.h * est.dpr);
+}
+function calcularRango() {
+  const P = puente(), tr = P.tramo();
+  const ms = P.notas().filter((n) => n.end > tr.a + EPS && n.start < tr.b - EPS).map((n) => n.midi);
+  let lo = (ms.length ? Math.min(...ms) : 55) - 2, hi = (ms.length ? Math.max(...ms) : 67) + 2;
+  while (hi - lo < 11) { hi++; lo--; }   // al menos 12 filas
+  est.rango = { min: lo, max: hi };
+}
+
+function iniciarJuego() {
+  const P = puente();
+  est.canvas = $('#canto-canvas'); est.g = est.canvas.getContext('2d');
+  leerColores(); calcularRango();
+  est.segs = []; est.trace = []; est.stats = new Map(); est.prev = null; est.passVista = 0;
+  est.sung = null; est.hudD = null; est.ultimoObjetivo = null; est.hudTexto = {};
+  est.med = crearMediana(5);
+  est.modoPrevio = P.modo();
+  P.setModo(est.ajustes.sinGuia ? 'sintenor' : 'tenorcoro');
+
+  $('#canto-titulo').textContent = 'Cantar · ' + P.pieza();
+  $('#canto-sub').textContent = 'Voz: ' + P.voz();
+  $('#canto-precision').textContent = '–';
+  $('#canto-ajustes-juego').appendChild($('#canto-ajustes'));
+  $('#modal-canto').classList.add('oculto');
+  $('#canto-juego').classList.remove('oculto');
+  document.body.style.overflow = 'hidden';
+  refrescarIconos();
+  ajustarLienzo();
+  est.ro = new ResizeObserver(() => { if (est.activo) ajustarLienzo(); });
+  est.ro.observe($('#canto-lienzo'));
+
+  est.activo = true; est.ultimo = 0;
+  P.iniciar();
+  est.raf = requestAnimationFrame(bucle);
+}
+
+function terminar(conResumen) {
+  if (!est.activo) return;
+  est.activo = false;
+  cancelAnimationFrame(est.raf);
+  const P = puente();
+  P.detener();
+  liberarMic();
+  if (est.modoPrevio) P.setModo(est.modoPrevio);
+  if (est.ro) est.ro.disconnect();
+  $('#canto-juego').classList.add('oculto');
+  $('#canto-panel-ajustes').classList.add('oculto');
+  $('#canto-btn-ajustes').setAttribute('aria-expanded', 'false');
+  $('#canto-ajustes-intro').appendChild($('#canto-ajustes'));
+  document.body.style.overflow = '';
+  if (conResumen) mostrarResumen();
+  $('#btnCantar').focus();
+}
+
+function bucle(ts) {
+  if (!est.activo) return;
+  if (!puente().reproduciendo()) { terminar(true); return; }   // la pieza terminó o se detuvo
+  if (ts - est.ultimo >= 25) { est.ultimo = ts; analizar(); }
+  dibujar();
+  est.raf = requestAnimationFrame(bucle);
+}
+
+/* ------------------------------------------------------------------ análisis y puntuación */
+function sumar(pass, st, dt) {
+  let s = est.stats.get(pass);
+  if (!s) { s = { hit: 0, miss: 0, none: 0 }; est.stats.set(pass, s); }
+  s[st === 'hit' ? 'hit' : st === 'miss' ? 'miss' : 'none'] += dt;
+}
+
+function analizar() {
+  const P = puente(), ac = est.ac, fs = ac.sampleRate, A = est.ajustes;
+  est.an.getFloatTimeDomainData(est.buf);
+  const r = yin(est.buf, fs);
+  const bruto = r.f > 0 && r.claridad >= 1 - YIN.UMBRAL ? hzAMidi(r.f) : null;
+  const m = est.med.poner(bruto);
+  est.sung = m;
+
+  // Instante de la partitura con el que se compara lo que suena ahora en el micrófono:
+  // se descuenta el retraso de análisis, el de salida, el del contexto y la calibración manual.
+  const te = ac.currentTime - retrasoAnalisis(fs) - (ac.outputLatency || 0) - (ac.baseLatency || 0) - A.latenciaMs / 1000;
+  const p = P.beatEn(te);
+  est.hudD = null;
+  if (p.hold || p.beat < 0) { est.prev = null; return; }
+
+  const linea = P.notas(), spb = P.spb();
+  const idx = notaEn(linea, p.beat);
+  if (idx >= 0) est.ultimoObjetivo = linea[idx].midi;
+  const obj = est.ultimoObjetivo;
+
+  if (p.pass >= est.passVista) {
+    est.trace.push({ pass: p.pass, b: p.beat, m: m === null ? null : (A.cualquierOctava && obj !== null ? plegar(m, obj) : m) });
+    if (est.trace.length > 4000) est.trace.splice(0, 1000);
+  }
+
+  const prev = est.prev && est.prev.pass === p.pass && p.beat > est.prev.b ? est.prev.b : p.beat - 0.025 / spb;
+  est.prev = { pass: p.pass, b: p.beat };
+  if (idx < 0) return;
+
+  const nota = linea[idx];
+  if (m !== null) est.hudD = distCents(m, nota.midi, A.cualquierOctava);
+  const b0 = Math.max(prev, nota.start + GRACIA_S / spb);
+  if (p.beat <= b0) return;   // todavía dentro de los primeros 120 ms de la nota
+
+  const st = m === null ? 'none' : Math.abs(est.hudD) <= A.margen ? 'hit' : 'miss';
+  sumar(p.pass, st, Math.min(0.1, (p.beat - b0) * spb));
+  if (p.pass < est.passVista) return;
+  const ult = est.segs[est.segs.length - 1];
+  if (ult && ult.pass === p.pass && ult.idx === idx && ult.st === st && b0 - ult.b1 < 0.05) ult.b1 = p.beat;
+  else { est.segs.push({ pass: p.pass, idx, b0, b1: p.beat, st }); if (est.segs.length > 2000) est.segs.splice(0, 500); }
+}
+
+/* ------------------------------------------------------------------ dibujo */
+function dibujar() {
+  const g = est.g, W = est.w, H = est.h, C = est.col, P = puente(), ac = est.ac;
+  const tr = P.tramo(), linea = P.notas();
+  const pd = P.beatEn(ac.currentTime - (ac.outputLatency || 0));
+  const cur = pd.beat < 0 ? tr.a : pd.beat;
+  if (pd.pass > est.passVista) {   // empezó una vuelta nueva: se olvidan los colores de la anterior
+    est.passVista = pd.pass;
+    est.segs = est.segs.filter((s) => s.pass >= pd.pass);
+    est.trace = est.trace.filter((t) => t.pass >= pd.pass);
+  }
+
+  const etiq = 46, top = 14, bot = 14, areaH = H - top - bot;
+  const ppb = Math.max(60, (W - etiq) / 9), playX = etiq + (W - etiq) * 0.28;
+  const filas = est.rango.max - est.rango.min + 1, rh = areaH / filas;
+  const nh = Math.min(28, Math.max(8, rh * 0.8));
+  const yc = (m) => top + (est.rango.max - m + 0.5) * rh;
+  const yMin = top, yMax = top + areaH;
+  const xDe = (b) => playX + (b - cur) * ppb;
+
+  g.setTransform(est.dpr, 0, 0, est.dpr, 0, 0);
+  g.fillStyle = C.fondo; g.fillRect(0, 0, W, H);
+
+  g.save();
+  g.beginPath(); g.rect(etiq, 0, W - etiq, H); g.clip();
+
+  // rejilla de notas naturales
+  g.lineWidth = 1; g.strokeStyle = C.rejilla;
+  for (let m = est.rango.min; m <= est.rango.max; m++) {
+    if (NATURALES.indexOf(((m % 12) + 12) % 12) < 0) continue;
+    const y = Math.round(yc(m)) + 0.5;
+    g.beginPath(); g.moveTo(etiq, y); g.lineTo(W, y); g.stroke();
+  }
+  // principio y final del tramo
+  g.setLineDash([6, 6]);
+  [tr.a, tr.b].forEach((b) => { const x = xDe(b); if (x > etiq && x < W) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); } });
+  g.setLineDash([]);
+
+  // notas del tramo
+  const ancho = (b0, b1) => Math.max(3, (b1 - b0) * ppb - 2);
+  g.font = '600 11px Outfit, system-ui, sans-serif'; g.textBaseline = 'middle';
+  for (const n of linea) {
+    if (n.end <= tr.a + EPS || n.start >= tr.b - EPS) continue;
+    const s = Math.max(n.start, tr.a), e = Math.min(n.end, tr.b), x = xDe(s);
+    if (xDe(e) < etiq || x > W) continue;
+    const w = ancho(s, e), y = yc(n.midi) - nh / 2, ahora = cur >= n.start - EPS && cur < n.end - EPS;
+    g.fillStyle = C.nota; g.fillRect(x, y, w, nh);
+    g.strokeStyle = ahora ? C.cabezal : C.notaBorde; g.lineWidth = ahora ? 2 : 1; g.strokeRect(x + 0.5, y + 0.5, w - 1, nh - 1);
+    if (w > 40 && nh >= 12) { g.fillStyle = C.tinta; g.globalAlpha = 0.75; g.fillText(nombreNota(n.midi), x + 6, y + nh / 2 + 0.5); g.globalAlpha = 1; }
+  }
+
+  // resultado por tramos de nota (solo la vuelta que se ve)
+  for (const s of est.segs) {
+    if (s.pass !== pd.pass) continue;
+    const n = linea[s.idx];
+    if (!n) continue;
+    const x0 = xDe(s.b0), x1 = xDe(s.b1);
+    if (x1 < etiq || x0 > W) continue;
+    g.fillStyle = s.st === 'hit' ? C.acierto : s.st === 'miss' ? C.fallo : C.sinVoz;
+    g.fillRect(x0, yc(n.midi) - nh / 2, Math.max(1.5, x1 - x0), nh);
+  }
+
+  // línea con lo que cantas
+  const atras = (playX - etiq) / ppb + 0.5;
+  g.lineWidth = 3; g.lineJoin = 'round'; g.lineCap = 'round'; g.strokeStyle = C.tinta;
+  let abierto = false, ult = null;
+  g.beginPath();
+  for (const t of est.trace) {
+    if (t.pass !== pd.pass || t.b < cur - atras || t.b > cur + 1) continue;
+    if (t.m === null) { abierto = false; continue; }
+    const x = xDe(t.b), y = Math.min(yMax, Math.max(yMin, yc(t.m)));
+    if (!abierto || (ult && t.b - ult.b > 0.3)) g.moveTo(x, y); else g.lineTo(x, y);
+    abierto = true; ult = { b: t.b, x, y };
+  }
+  g.stroke();
+  if (ult && cur - ult.b < 0.6) {
+    g.fillStyle = C.fondo; g.beginPath(); g.arc(ult.x, ult.y, 8, 0, Math.PI * 2); g.fill();
+    g.fillStyle = C.tinta; g.beginPath(); g.arc(ult.x, ult.y, 5, 0, Math.PI * 2); g.fill();
+  }
+
+  // cabezal
+  g.strokeStyle = C.cabezal; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(playX, 0); g.lineTo(playX, H); g.stroke();
+  if (pd.hold) {
+    g.fillStyle = C.tinta; g.font = '700 22px Outfit, system-ui, sans-serif'; g.textAlign = 'center';
+    g.fillText('Cuenta…', playX + (W - playX) / 2, H / 2);
+    g.textAlign = 'start';
+  }
+  g.restore();
+
+  // eje de notas
+  g.fillStyle = C.fondo; g.fillRect(0, 0, etiq, H);
+  g.fillStyle = C.texto; g.font = '600 11px Outfit, system-ui, sans-serif'; g.textBaseline = 'middle';
+  for (let m = est.rango.min; m <= est.rango.max; m++) {
+    const pc = ((m % 12) + 12) % 12;
+    if (NATURALES.indexOf(pc) < 0 || (rh < 12 && pc !== 0 && pc !== 7)) continue;
+    g.fillText(nombreNota(m), 6, yc(m));
+  }
+
+  actualizarHud(pd, linea);
+}
+
+function poner(id, texto, clase) {
+  const e = $('#' + id), k = id + '|' + texto + '|' + (clase || '');
+  if (est.hudTexto[id] === k) return;
+  est.hudTexto[id] = k;
+  e.textContent = texto;
+  if (clase !== undefined) e.className = 'canto-pista ' + clase;
+}
+function actualizarHud(pd, linea) {
+  const A = est.ajustes, m = est.sung, d = est.hudD;
+  const idx = pd.hold || pd.beat < 0 ? -1 : notaEn(linea, pd.beat);
+  poner('canto-objetivo', idx >= 0 ? nombreNota(linea[idx].midi) : '–');
+  poner('canto-cantas', m === null ? '–' : nombreNota(m) + (d !== null ? ' ' + (d > 0 ? '+' : '') + Math.round(d) + ' ¢' : ''));
+
+  let txt = 'Canta con el coro', clase = '';
+  if (pd.hold) txt = 'Cuenta…';
+  else if (m === null) txt = 'No te oigo con claridad';
+  else if (d === null) txt = idx >= 0 ? '…' : 'Descanso';
+  else if (Math.abs(d) <= A.margen) { txt = '¡Afinado!'; clase = 'ok'; }
+  else { txt = d > 0 ? 'Baja un poco ↓' : 'Sube un poco ↑'; clase = 'mal'; }
+  poner('canto-pista', txt, clase);
+
+  const marca = $('#canto-medidor-marca');
+  if (d === null) marca.classList.add('oculto');
+  else { marca.classList.remove('oculto'); marca.style.left = ((Math.max(-100, Math.min(100, d)) + 100) / 2) + '%'; }
+
+  const s = est.stats.get(pd.pass), tot = s ? s.hit + s.miss + s.none : 0;
+  poner('canto-precision', tot >= 0.5 ? Math.round((100 * s.hit) / tot) + '%' : '–');
+}
+
+/* ------------------------------------------------------------------ resumen */
+function mostrarResumen() {
+  let hit = 0, miss = 0, none = 0;
+  const pasadas = [];
+  est.stats.forEach((s, id) => { hit += s.hit; miss += s.miss; none += s.none; pasadas.push({ id, ...s, tot: s.hit + s.miss + s.none }); });
+  const tot = hit + miss + none;
+  const seg = (x) => x.toFixed(1) + ' s';
+  let html;
+  if (tot < 1.5) {
+    html = '<p>Se evaluó muy poco tiempo. Canta durante el ensayo y vuelve a intentarlo.</p>';
+  } else {
+    const pct = Math.round((100 * hit) / tot);
+    html = `<p style="font-size:34px;font-weight:700;margin:4px 0">${pct}%</p>` +
+      '<p style="margin-bottom:10px">de precisión</p>' +
+      `<p>Afinado: <strong>${seg(hit)}</strong> · Desafinado: <strong>${seg(miss)}</strong> · Sin voz clara: <strong>${seg(none)}</strong></p>`;
+    const validas = pasadas.filter((q) => q.tot >= 0.5 * Math.max(...pasadas.map((z) => z.tot)));
+    if (validas.length > 1) {
+      const mejor = validas.reduce((a, b) => (b.hit / b.tot > a.hit / a.tot ? b : a));
+      html += `<p style="margin-top:8px">Mejor vuelta: <strong>${mejor.id + 1}</strong> (${Math.round((100 * mejor.hit) / mejor.tot)}%)</p>`;
+    }
+    html += `<p style="margin-top:8px;opacity:.7">Margen ±${est.ajustes.margen} cents${est.ajustes.cualquierOctava ? ' · cualquier octava' : ''}</p>`;
+  }
+  if (window.Swal) {
+    Swal.fire({ title: 'Práctica terminada', html, confirmButtonText: 'Cerrar', confirmButtonColor: '#0f766e', background: css('--superficie'), color: css('--slate-900') });
+  }
+}
+
+/* ------------------------------------------------------------------ eventos */
+$('#btnCantar').addEventListener('click', abrir);
+$('#canto-cancelar').addEventListener('click', cerrarAviso);
+$('#canto-empezar').addEventListener('click', empezar);
+$('#canto-detener').addEventListener('click', () => terminar(true));
+$('#canto-btn-ajustes').addEventListener('click', (e) => {
+  const abierto = $('#canto-panel-ajustes').classList.toggle('oculto') === false;
+  e.currentTarget.setAttribute('aria-expanded', abierto);
+});
+$('#modal-canto').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-canto') cerrarAviso(); });
+// En fase de captura para que Esc no llegue además a la selección de tramos del Ensayo.
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && est.activo) { e.preventDefault(); e.stopImmediatePropagation(); terminar(true); return; }
+  if (!$('#modal-canto').classList.contains('oculto')) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); cerrarAviso(); return; }
+    if (e.key === 'Tab') {
+      const f = [...$('#modal-canto').querySelectorAll('input, select, button')].filter((x) => !x.disabled);
+      if (!f.length) return;
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+    }
+  }
+}, true);
+addEventListener('pagehide', () => { if (est.activo) terminar(false); });
+
+window.Canto = { abrir, yin, crearMediana, distCents, plegar, nombreNota, notaEn, _est: est };
+})();
+</script>

@@ -211,6 +211,19 @@
           </div>
 
           <div class="seccion">
+            <span class="seccion-etiqueta"><i data-lucide="mic"></i> Cantar con el micrófono</span>
+            <ul class="pasos">
+              <li><strong>Empezar:</strong> pulsa «Cantar» junto al metrónomo, revisa los ajustes y pulsa «Empezar». El navegador te pedirá permiso para usar el micrófono.</li>
+              <li><strong>Qué verás:</strong> un rollo de notas que avanza hacia el cabezal y una línea negra con lo que cantas. La nota se pinta de <strong>verde</strong> si estás afinado, <strong>roja</strong> si no, y <strong>gris</strong> si no se oye una voz clara. Debajo, la nota y cuántos cents te desvías.</li>
+              <li><strong>Margen:</strong> Exigente (±25 cents), Normal (±50) o Principiante (±100). «Aceptar cualquier octava» da por buena la nota aunque la cantes una octava más arriba o abajo.</li>
+              <li><strong>Los primeros 120 ms</strong> de cada nota no se evalúan, para darte tiempo de entrar.</li>
+              <li><strong>Auriculares:</strong> úsalos siempre. Si el sonido sale por altavoces, el micrófono lo capta y la detección falla. Por eso, por defecto se activa «Sin guía de tu voz» y solo suena el coro de fondo.</li>
+              <li><strong>Calibración de latencia:</strong> si fallas siempre al empezar cada nota aunque la cantes bien, sube el valor. Con auriculares Bluetooth suelen hacer falta 150–300 ms.</li>
+              <li>Para terminar pulsa «Detener» o Esc; verás tu precisión total.</li>
+            </ul>
+          </div>
+
+          <div class="seccion">
             <span class="seccion-etiqueta"><i data-lucide="save"></i> Tus tramos guardados</span>
             <p class="nota-seccion">Los tramos, el tempo y la voz elegida se guardan en tu cuenta para cada archivo. Si cambias el nombre del archivo MIDI, se tratará como una pieza nueva.</p>
           </div>
@@ -228,6 +241,7 @@
             </button>
             <button id="btnLoop" class="toggle btn" type="button" aria-pressed="true">Repetir tramo</button>
             <button id="btnMetro" class="toggle btn" type="button" aria-pressed="false">Metrónomo</button>
+            <button id="btnCantar" class="btn" type="button" title="Practicar cantando con el micrófono"><i data-lucide="mic"></i> Cantar</button>
             <div class="seg" role="radiogroup" aria-label="Qué se escucha" id="modes">
               <button type="button" role="radio" data-mode="tenor" aria-checked="false">Solo tenor</button>
               <button type="button" role="radio" data-mode="tenorcoro" aria-checked="true">Tenor + coro</button>
@@ -237,6 +251,76 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Cantar: aviso previo con los ajustes de la práctica. «Empezar» pide el micrófono. -->
+  <div id="modal-canto" class="modal oculto" role="dialog" aria-modal="true" aria-labelledby="modal-canto-titulo">
+    <div class="modal-caja modal-caja-ancha">
+      <h2 id="modal-canto-titulo">Práctica con micrófono</h2>
+      <p class="subtitulo">Se hará una práctica con el <strong>micrófono encendido</strong>: la app escucha tu voz y la compara con la partitura mientras suena el ensayo. El audio se analiza en tu dispositivo; no se graba ni se envía.</p>
+
+      <div class="aviso-auriculares" role="note">
+        <i data-lucide="headphones"></i>
+        <span><strong>Usa auriculares.</strong> Si el sonido sale por los altavoces, el micrófono lo recoge y la detección se confunde. Con auriculares Bluetooth hay más retraso: ajústalo en la calibración.</span>
+      </div>
+
+      <div id="canto-ajustes-intro">
+        <div class="canto-ajustes" id="canto-ajustes">
+          <label class="campo">Margen de afinación
+            <select id="canto-margen" aria-label="Margen de afinación en cents">
+              <option value="25">Exigente · ±25 cents</option>
+              <option value="50" selected>Normal · ±50 cents</option>
+              <option value="100">Principiante · ±100 cents</option>
+            </select>
+          </label>
+          <label class="campo">Calibración de latencia
+            <span class="campo-slider">
+              <input id="canto-latencia" type="range" min="-300" max="500" step="10" value="0" aria-label="Calibración de latencia en milisegundos">
+              <span class="mono" id="canto-latencia-val">0 ms</span>
+            </span>
+          </label>
+          <label class="check"><input type="checkbox" id="canto-octava" checked> Aceptar cualquier octava</label>
+          <label class="check"><input type="checkbox" id="canto-singuia" checked> <span>Sin guía de <span id="canto-voz-etiqueta">tu voz</span> (solo coro de fondo)</span></label>
+          <p class="ayuda-canto">Si fallas siempre al comienzo de cada nota aunque la cantes bien, sube la latencia: tu voz llega tarde por el equipo. Con auriculares Bluetooth suelen hacer falta 150–300 ms.</p>
+        </div>
+      </div>
+
+      <p class="error" id="canto-error" role="alert"></p>
+      <div class="modal-acciones">
+        <button type="button" class="btn" id="canto-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primario" id="canto-empezar"><i data-lucide="mic"></i> Empezar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cantar: vista de juego a pantalla completa (canvas). -->
+  <div id="canto-juego" class="canto-juego oculto" role="dialog" aria-modal="true" aria-label="Práctica cantando">
+    <div class="canto-top">
+      <div class="canto-top-texto">
+        <strong id="canto-titulo">Cantar</strong>
+        <span id="canto-sub" class="canto-sub"></span>
+      </div>
+      <div class="canto-precision">
+        <span class="canto-etiqueta">Precisión</span>
+        <strong id="canto-precision" class="mono">–</strong>
+      </div>
+      <button type="button" class="btn btn-chico" id="canto-btn-ajustes" aria-expanded="false" aria-controls="canto-panel-ajustes"><i data-lucide="settings-2"></i><span>Ajustes</span></button>
+      <button type="button" class="btn btn-chico btn-peligro" id="canto-detener"><i data-lucide="square"></i><span>Detener</span></button>
+    </div>
+    <div id="canto-panel-ajustes" class="canto-panel-ajustes oculto"><div id="canto-ajustes-juego"></div></div>
+    <div class="canto-lienzo" id="canto-lienzo">
+      <canvas id="canto-canvas" role="img" aria-label="Rollo de notas con la línea de tu voz: verde si estás afinado, rojo si no, gris si no se detecta voz"></canvas>
+    </div>
+    <div class="canto-hud">
+      <div class="canto-dato"><span class="canto-etiqueta">Nota</span><strong id="canto-objetivo" class="mono">–</strong></div>
+      <div class="canto-dato"><span class="canto-etiqueta">Cantas</span><strong id="canto-cantas" class="mono">–</strong></div>
+      <div class="canto-medidor" aria-hidden="true">
+        <div class="canto-medidor-zona" id="canto-medidor-zona"></div>
+        <div class="canto-medidor-centro"></div>
+        <div class="canto-medidor-marca oculto" id="canto-medidor-marca"></div>
+      </div>
+      <strong id="canto-pista" class="canto-pista" role="status" aria-live="polite">Escuchando…</strong>
     </div>
   </div>
 
@@ -275,5 +359,6 @@
   <?!= include('App'); ?>
   <?!= include('Ensayo'); ?>
   <?!= include('Biblioteca'); ?>
+  <?!= include('Canto'); ?>
 </body>
 </html>

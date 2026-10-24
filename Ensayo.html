@@ -524,13 +524,14 @@ function killAll() {
 }
 
 /* Reproductor: planifica notas con adelanto sobre el reloj de audio */
-const S = { playing: false, nextBeat: 0, nextTime: 0, segs: [], timer: 0, segSpb: 0, stopAt: 0, finished: false, counting: false };
+const S = { playing: false, nextBeat: 0, nextTime: 0, segs: [], timer: 0, segSpb: 0, stopAt: 0, finished: false, counting: false, pass: 0 };
 const spbNow = () => 60 / state.bpm;
 function playRange() {
   const song = state.song;
   return state.sel ? { a: state.sel.a, b: Math.min(state.sel.b, song.total), loop: state.loop } : { a: 0, b: song.total, loop: state.loop };
 }
-function pushSeg(hold) { S.segs.push({ t: S.nextTime, beat: S.nextBeat, spb: spbNow(), hold: !!hold }); S.segSpb = spbNow(); }
+// pass = número de vuelta del tramo; el modo Cantar lo usa para no mezclar resultados de vueltas distintas.
+function pushSeg(hold) { S.segs.push({ t: S.nextTime, beat: S.nextBeat, spb: spbNow(), hold: !!hold, pass: S.pass }); S.segSpb = spbNow(); }
 function doCount() {
   const n = Math.max(1, Math.ceil(state.song.mb - EPS)), spb = spbNow();
   for (let i = 0; i < n; i++) click(S.nextTime + i * spb, i === 0);
@@ -558,7 +559,7 @@ function tick() {
     if (S.segSpb !== spb) pushSeg(false);
     if (S.nextBeat >= r.b - EPS) {
       if (r.loop) {
-        S.nextBeat = r.a;
+        S.nextBeat = r.a; S.pass++;
         if (state.count === 'each') doCount(); else pushSeg(false);
         continue;
       }
@@ -584,7 +585,7 @@ function startPlay() {
   if (!state.song) return;
   ensureAudio(); killAll();
   const r = playRange();
-  S.playing = true; S.finished = false; S.segs = []; S.nextBeat = r.a; S.nextTime = ac.currentTime + 0.12;
+  S.playing = true; S.finished = false; S.segs = []; S.pass = 0; S.nextBeat = r.a; S.nextTime = ac.currentTime + 0.12;
   if (state.count !== 'none') doCount(); else pushSeg(false);
   clearInterval(S.timer); S.timer = setInterval(tick, 25); tick();
   setPlayUi(true); requestAnimationFrame(frame);
@@ -596,13 +597,19 @@ function setPlayUi(on, counting) {
   $('#playText').textContent = on ? (counting ? 'Cuenta…' : 'Detener') : 'Reproducir';
   $('#playIcon').innerHTML = on ? '<path d="M2.5 2h4v12h-4zM9.5 2h4v12h-4z"/>' : '<path d="M3 1.5v13l11-6.5z"/>';
 }
-function currentBeat() {
-  const T = ac.currentTime - (ac.outputLatency || 0);
+// Compás (en pulsos) que corresponde al instante T del reloj de audio, y vuelta a la que pertenece.
+function beatAtTime(T) {
   let seg = null;
   for (let i = S.segs.length - 1; i >= 0; i--) { if (S.segs[i].t <= T) { seg = S.segs[i]; break; } }
-  if (!seg) return { beat: -1, hold: true };
-  while (S.segs.length > 2 && S.segs[1].t <= T) S.segs.shift();
-  return { beat: seg.hold ? seg.beat : seg.beat + (T - seg.t) / seg.spb, hold: seg.hold };
+  if (!seg) return { beat: -1, hold: true, pass: 0 };
+  return { beat: seg.hold ? seg.beat : seg.beat + (T - seg.t) / seg.spb, hold: seg.hold, pass: seg.pass };
+}
+function currentBeat() {
+  const T = ac.currentTime - (ac.outputLatency || 0);
+  const r = beatAtTime(T);
+  // Se conserva 1 s de historia: el modo Cantar consulta instantes algo anteriores al actual.
+  while (S.segs.length > 2 && S.segs[1].t <= T - 1) S.segs.shift();
+  return r;
 }
 function setNow(idx, sys) {
   if (idx === ui.nowIdx) return;
@@ -689,10 +696,13 @@ $('#play').addEventListener('click', () => (S.playing ? stopPlay() : startPlay()
 $('#btnLoop').addEventListener('click', (e) => { state.loop = !state.loop; e.currentTarget.setAttribute('aria-pressed', state.loop); });
 $('#btnMetro').addEventListener('click', (e) => { state.metro = !state.metro; e.currentTarget.setAttribute('aria-pressed', state.metro); });
 $('#count').addEventListener('change', (e) => { state.count = e.target.value; });
+function aplicarModo(m) {
+  state.mode = m;
+  document.querySelectorAll('#modes button').forEach((x) => x.setAttribute('aria-checked', x.dataset.mode === m));
+}
 $('#modes').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  state.mode = b.dataset.mode;
-  document.querySelectorAll('#modes button').forEach((x) => x.setAttribute('aria-checked', x === b));
+  aplicarModo(b.dataset.mode);
 });
 $('#bpm').addEventListener('input', (e) => { state.bpm = +e.target.value; setBpmUi(); persist(); });
 $('#coroVol').addEventListener('input', (e) => { state.coroVol = +e.target.value / 100; });
@@ -703,7 +713,7 @@ $('#btnClear').addEventListener('click', limpiarSeleccion);
 // Un clic fuera de una nota o compás (y fuera de los controles) deja el ensayo sin tramo; Esc hace lo mismo.
 document.addEventListener('click', (e) => {
   if (!state.sel || $('#panel-ensayo').classList.contains('oculto')) return;
-  if (e.target.closest('button, input, select, label, a, .bar, .modal, .swal2-container')) return;
+  if (e.target.closest('button, input, select, label, a, .bar, .modal, .swal2-container, .canto-juego')) return;
   const { pn, mr } = ubicar(e);
   if (!pn && !mr) limpiarSeleccion();
 });
@@ -772,7 +782,23 @@ function boot() {
     },
     // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
     cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave),
-    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, '')
+    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, ''),
+    // Lo que necesita el modo Cantar (Canto.html) para sincronizarse con el reproductor.
+    puente: {
+      contexto: () => { ensureAudio(); return ac; },
+      reproduciendo: () => S.playing,
+      iniciar: startPlay,
+      detener: stopPlay,
+      beatEn: beatAtTime,
+      spb: spbNow,
+      tramo: playRange,
+      notas: () => curLine(),
+      voz: () => curVoice().name.replace(/\s*\(canal.*\)/, ''),
+      pieza: () => state.song.title,
+      modo: () => state.mode,
+      setModo: aplicarModo,
+      guardarPrefs
+    }
   };
   if (window.refrescarTituloTopbar) window.refrescarTituloTopbar();
   ejecutar('getPrefs').then((p) => {
