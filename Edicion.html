@@ -42,18 +42,31 @@ const clonar = (o) => JSON.parse(JSON.stringify(o));
 //   { midi?, start?, end?, letra?, del? }                  → nota existente modificada, o borrada (queda un silencio)
 //   { nuevo: true, t, ch, midi, start, end, vel, letra? }   → nota escrita por el usuario (clave «+n»)
 // extra: compases de silencio añadidos al final de la pieza.
+// warps: cambios de tiempo que afectan a TODAS las voces a la vez (alargar/acortar un tramo, insertar tiempo), en orden:
+//   { s, e, L, d }  → el tramo [s,e) pasa a medir L (d = L − (e − s)); lo posterior se corre d; lo de dentro se escala
+//   { s, e: s, d }  → se inserta tiempo d en s (todo lo que empieza en s o después se corre d)
+// Las notas sin cambio propio se calculan a partir de las originales pasando por los warps; ov ya va en tiempo final.
 const ed = {
-  activo: false, key: null, rs: null, ov: {}, extra: 0, hist: [{ ov: {}, extra: 0 }], pos: 0,
+  activo: false, key: null, rs: null, ov: {}, extra: 0, warps: [], hist: [{ ov: {}, extra: 0, warps: [] }], pos: 0,
   libId: null, base: new Map(), nMeasBase: 0, nuevoId: 0, guardando: false
 };
+// Tiempo (en pulsos de negra) tras aplicar los warps `lista`. esFin: el instante es el final de una nota (no el inicio).
+function tiempo(x, esFin, lista) {
+  (lista || ed.warps).forEach((w) => {
+    if (w.e - w.s < EPS) { if (esFin ? x > w.s + EPS : x > w.s - EPS) x += w.d; }
+    else if (x >= w.e - EPS) x += w.d;
+    else if (x > w.s + EPS) x = w.s + (x - w.s) * w.L / (w.e - w.s);
+  });
+  return x;
+}
 let P = null;
 const S = () => P.estado();
 const linea = () => P.linea();
 const idxDe = (k) => (k ? linea().findIndex((n) => n.key === k) : -1);
-const cambios = () => Object.keys(ed.ov).length + ed.extra;
+const cambios = () => Object.keys(ed.ov).length + ed.extra + ed.warps.length;
 
 function resumen() {
-  const r = { total: cambios(), duraciones: 0, alturas: 0, agregadas: 0, sustituidas: 0, letras: 0, compases: ed.extra };
+  const r = { total: cambios(), duraciones: 0, alturas: 0, agregadas: 0, sustituidas: 0, letras: 0, compases: ed.extra, sincronizadas: ed.warps.length };
   Object.values(ed.ov).forEach((o) => {
     if (o.nuevo) r.agregadas++;
     else if (o.del) r.sustituidas++;
@@ -72,11 +85,14 @@ const utf8 = (s) => new TextEncoder().encode(s);
  * Las pistas y eventos no tocados se escriben igual que estaban; el original no se muta.
  * extra/totalBeats: si se añadieron compases al final, el fin de cada pista se alarga hasta el final de la pieza.
  */
-function escribirMidi(raw, ov, extra, totalBeats) {
+function escribirMidi(raw, ov, extra, totalBeats, warps) {
   const ppq = raw.ppq;
-  const finMinimo = extra > 0 ? Math.round(totalBeats * ppq) : 0;
+  warps = warps || [];
+  const finMinimo = extra > 0 || warps.length ? Math.round(totalBeats * ppq) : 0;
   const pistas = raw.tracks.map((t, ti) => {
     const evs = t.events.map((e, i) => Object.assign({ i }, e));
+    // los cambios de tiempo de todas las voces mueven todos los eventos de la pista (notas, letras, tempo…)
+    if (warps.length) evs.forEach((e) => { const fin = e.st !== undefined && ((e.st & 0xF0) === 0x80 || ((e.st & 0xF0) === 0x90 && e.b === 0)); e.tick = Math.round(tiempo(e.tick / ppq, fin, warps) * ppq); });
     const borrar = new Set();
     const nuevo = (e) => { e.i = evs.length; evs.push(e); return e; };
     t.notes.forEach((n) => {
@@ -160,20 +176,20 @@ const polifonica = (v) => {
 };
 function conCambios(b) {
   const o = ed.ov[b.key];
-  if (!o) return b;
-  if (o.del) return null;
+  if (!o && !ed.warps.length) return b;
+  if (o && o.del) return null;
+  const w = o || {};
   return Object.assign({}, b, {
-    midi: o.midi !== undefined ? o.midi : b.midi,
-    start: o.start !== undefined ? o.start : b.start,
-    end: o.end !== undefined ? o.end : b.end,
-    letra: o.letra !== undefined ? o.letra : b.letra
+    midi: w.midi !== undefined ? w.midi : b.midi,
+    start: w.start !== undefined ? w.start : tiempo(b.start, false),
+    end: w.end !== undefined ? w.end : tiempo(b.end, true),
+    letra: w.letra !== undefined ? w.letra : b.letra
   });
 }
 // Recalcula las notas y la línea de cada voz a partir de las originales + cambios. El reproductor las lee en vivo.
 function reconstruir() {
   const song = S().song;
-  song.nMeas = ed.nMeasBase + ed.extra;
-  song.total = song.nMeas * song.mb;
+  let contenido = 0;
   song.voices.forEach((v) => {
     if (!v.base) return;
     const notas = [];
@@ -185,23 +201,28 @@ function reconstruir() {
     notas.sort((a, b) => a.start - b.start || a.midi - b.midi);
     v.notes = notas;
     v.line = P.monoLine(notas);
+    notas.forEach((n) => { contenido = Math.max(contenido, n.end); });
   });
+  // compases: los de la pieza (más o menos largos si cambió el tiempo) y los añadidos; siempre caben todas las notas
+  const baseComp = ed.warps.length ? Math.ceil(tiempo(ed.nMeasBase * song.mb, true) / song.mb - EPS) : ed.nMeasBase;
+  song.nMeas = Math.max(1, baseComp + ed.extra, Math.ceil(contenido / song.mb - EPS));
+  song.total = song.nMeas * song.mb;
 }
 function normalizar(k, o) {
   const b = ed.base.get(k);
   if (!b) return;   // las notas nuevas no tienen original con el que comparar
   if (o.del) { delete o.midi; delete o.start; delete o.end; delete o.letra; return; }
   if (o.midi !== undefined && o.midi === b.midi) delete o.midi;
-  if (o.start !== undefined && Math.abs(o.start - b.start) < EPS) delete o.start;
-  if (o.end !== undefined && Math.abs(o.end - b.end) < EPS) delete o.end;
+  if (o.start !== undefined && Math.abs(o.start - tiempo(b.start, false)) < EPS) delete o.start;
+  if (o.end !== undefined && Math.abs(o.end - tiempo(b.end, true)) < EPS) delete o.end;
   if (o.letra !== undefined && (o.letra || '') === (b.letra || '')) delete o.letra;
 }
 function guardarHist() {
   ed.hist = ed.hist.slice(0, ed.pos + 1);
-  ed.hist.push({ ov: clonar(ed.ov), extra: ed.extra });
+  ed.hist.push({ ov: clonar(ed.ov), extra: ed.extra, warps: clonar(ed.warps) });
   ed.pos++;
 }
-function aplicar(cambiosNuevos) {
+function mezclar(cambiosNuevos) {
   const nuevo = clonar(ed.ov);
   Object.keys(cambiosNuevos).forEach((k) => {
     const val = cambiosNuevos[k], cur = nuevo[k];
@@ -211,10 +232,26 @@ function aplicar(cambiosNuevos) {
     if (Object.keys(o).length) nuevo[k] = o; else delete nuevo[k];
   });
   ed.ov = nuevo;
+}
+function aplicar(cambiosNuevos) {
+  mezclar(cambiosNuevos);
   guardarHist();
   refrescar();
 }
-function restaurar(s) { ed.ov = clonar(s.ov); ed.extra = s.extra; refrescar(); }
+// Cambio de tiempo que afecta a todas las voces; c: cambios propios (ya en tiempo final) que se aplican en el mismo paso.
+function aplicarWarp(w, c) {
+  Object.values(ed.ov).forEach((o) => {
+    if (o.start !== undefined) o.start = tiempo(o.start, false, [w]);
+    if (o.end !== undefined) o.end = tiempo(o.end, true, [w]);
+  });
+  ed.warps = ed.warps.concat([w]);
+  Object.keys(ed.ov).forEach((k) => { normalizar(k, ed.ov[k]); if (!Object.keys(ed.ov[k]).length) delete ed.ov[k]; });
+  if (c) mezclar(c);
+  guardarHist();
+  refrescar();
+}
+const sincronizar = () => $('#ed-sync').checked;
+function restaurar(s) { ed.ov = clonar(s.ov); ed.extra = s.extra; ed.warps = clonar(s.warps); refrescar(); }
 function refrescar() {
   reconstruir();
   P.render();   // dispara pintar() y actualizarPanel() por el enganche alRenderizar
@@ -318,6 +355,10 @@ function cambiarDuracion(L) {
   if (idx < 0) return;
   const n = l[idx], nuevoFin = n.start + L;
   if (Math.abs(n.end - n.start - L) < EPS) return;
+  if (sincronizar()) {   // todas las voces: lo que suena en ese tramo se estira igual y lo posterior se corre
+    aplicarWarp({ s: n.start, e: n.end, L, d: L - (n.end - n.start) });
+    return;
+  }
   const c = {};
   let r = { movidas: 0, fin: nuevoFin };
   if (nuevoFin > n.end + EPS) r = cascada(n.end, nuevoFin, c);   // alargar: las notas que estorban se corren al compás siguiente
@@ -333,7 +374,7 @@ function insertarEn(pos, L, nota) {
   const v = P.voz();
   if (v.t === undefined) { aviso('Esta voz no se puede editar.'); return; }
   const c = {}, l = linea();
-  const r = correr(pos, L, c);
+  const r = sincronizar() ? { movidas: 0, fin: 0 } : correr(pos, L, c);
   let key = null;
   if (nota) {
     let prev = null, sig = null;
@@ -343,8 +384,11 @@ function insertarEn(pos, L, nota) {
     key = '+' + (++ed.nuevoId);
     c[key] = { nuevo: true, t: v.t, ch: v.ch, midi, start: pos, end: pos + L, vel: vels.length ? vels[vels.length >> 1] : 80 };
   }
-  if (!asegurarCompases(Math.max(r.fin, pos + L))) { if (key) ed.nuevoId--; return; }
-  aplicar(c);
+  if (sincronizar()) aplicarWarp({ s: pos, e: pos, d: L }, c);   // se hace sitio en todas las voces
+  else {
+    if (!asegurarCompases(Math.max(r.fin, pos + L))) { if (key) ed.nuevoId--; return; }
+    aplicar(c);
+  }
   if (key) elegir(key, true); else elegirSilencio(pos);
   avisoCorridas(r.movidas);
 }
@@ -373,15 +417,16 @@ function insertarNota(L) {
   if (v.t === undefined) { aviso('Esta voz no se puede editar.'); return; }
   const l = linea(), c = {};
   let r = { movidas: 0, fin: h.ini + L };
-  if (h.ini + L > h.fin + EPS) r = cascada(h.fin, h.ini + L, c);   // no cabe en el hueco: las siguientes se corren
-  if (!asegurarCompases(r.fin)) return;
+  const falta = h.ini + L - h.fin, sinc = sincronizar() && falta > EPS;
+  if (falta > EPS && !sinc) r = cascada(h.fin, h.ini + L, c);   // no cabe en el hueco: las siguientes se corren
+  if (!sinc && !asegurarCompases(r.fin)) return;
   let prev = null, sig = null;
   l.forEach((n) => { if (n.end <= h.ini + EPS && (!prev || n.end >= prev.end)) prev = n; if (n.start >= h.ini - EPS && !sig) sig = n; });
   const midi = prev ? prev.midi : sig ? sig.midi : Math.round(v.med);   // empieza con la altura de la nota vecina
   const vels = v.base.map((b) => b.vel).filter(Boolean).sort((a, b) => a - b);
   const key = '+' + (++ed.nuevoId);
   c[key] = { nuevo: true, t: v.t, ch: v.ch, midi, start: h.ini, end: h.ini + L, vel: vels.length ? vels[vels.length >> 1] : 80 };
-  aplicar(c);
+  if (sinc) aplicarWarp({ s: h.fin, e: h.fin, d: falta }, c); else aplicar(c);   // con todas las voces, se añade el tiempo que falta
   elegir(key, true);
   avisoCorridas(r.movidas);
 }
@@ -394,6 +439,26 @@ function convertirEnSilencio() {
   ed.key = null;
   elegirSilencio(n.start);
   if (!ed.rs) { pintar(); actualizarPanel(); }
+}
+
+// Quita el silencio elegido cerrando el hueco. Con todas las voces, solo si ninguna otra suena en ese tramo.
+function quitarSilencio() {
+  const h = ed.rs && huecoEn(ed.rs.ini);
+  if (!h) return;
+  const largo = h.fin - h.desde;
+  if (h.fin >= S().song.total - EPS) { aviso('Ese silencio es el final de la pieza: quita compases si sobran.'); return; }
+  if (largo < EPS) return;
+  if (sincronizar()) {
+    const otra = S().song.voices.find((v) => v.notes.some((n) => n.end > h.desde + EPS && n.start < h.fin - EPS));
+    if (otra) { aviso('No se puede quitar: «' + otra.name + '» tiene notas en ese tramo. Alarga mejor la nota anterior (se aplica a todas las voces).'); return; }
+    ed.rs = null;
+    aplicarWarp({ s: h.desde, e: h.fin, L: 0, d: -largo });
+  } else {
+    const c = {};
+    correr(h.fin, -largo, c);
+    ed.rs = null;
+    aplicar(c);
+  }
 }
 
 function agregarCompas() {
@@ -419,7 +484,7 @@ function cambiarLetra(key, texto) {
 function deshacer() { if (ed.pos > 0) { ed.pos--; restaurar(ed.hist[ed.pos]); } }
 function rehacer() { if (ed.pos < ed.hist.length - 1) { ed.pos++; restaurar(ed.hist[ed.pos]); } }
 function reiniciarCambios() {
-  ed.ov = {}; ed.extra = 0; ed.hist = [{ ov: {}, extra: 0 }]; ed.pos = 0; ed.key = null; ed.rs = null;
+  ed.ov = {}; ed.extra = 0; ed.warps = []; ed.hist = [{ ov: {}, extra: 0, warps: [] }]; ed.pos = 0; ed.key = null; ed.rs = null;
   if (P && S().song && S().song.voices) reconstruir();
 }
 
@@ -435,7 +500,7 @@ function textoResumen(r) {
   return [
     r.duraciones && `${r.duraciones} duración(es)`, r.alturas && `${r.alturas} altura(s)`,
     r.agregadas && `${r.agregadas} nota(s) nueva(s)`, r.sustituidas && `${r.sustituidas} nota(s) quitada(s)`,
-    r.letras && `${r.letras} letra(s)`, r.compases && `${r.compases} compás(es) añadido(s)`
+    r.letras && `${r.letras} letra(s)`, r.sincronizadas && `${r.sincronizadas} cambio(s) de tiempo en todas las voces`, r.compases && `${r.compases} compás(es) añadido(s)`
   ].filter(Boolean).join(' · ');
 }
 async function guardarVersion() {
@@ -453,7 +518,7 @@ async function guardarVersion() {
     if (!ok) return;
     ed.guardando = true;
     const song = S().song, compases = song.nMeas;
-    const bytes = escribirMidi(song.raw, ed.ov, ed.extra, song.total);
+    const bytes = escribirMidi(song.raw, ed.ov, ed.extra, song.total, ed.warps);
     const meta = window.Ensayo.analizar(bytes.buffer);
     meta.compases = compases;   // incluye los compases de silencio añadidos
     const it = await ejecutar('guardarVersion', ed.libId, aBase64(bytes), meta, r);
@@ -541,6 +606,7 @@ function actualizarPanel() {
   });
   $('#ed-ins-nota').disabled = !n && !h; $('#ed-ins-sil').disabled = !n && !h;
   $('#ed-ins-pos').disabled = !n;
+  $('#ed-quitar-sil').disabled = !h || h.fin >= S().song.total - EPS || h.fin - h.desde < EPS;
   ['ed-oct-bajar', 'ed-semi-bajar', 'ed-semi-subir', 'ed-oct-subir', 'ed-silencio'].forEach((id) => { $('#' + id).disabled = !n; });
   $('#ed-prev').disabled = !l.length; $('#ed-next').disabled = !l.length;
   $('#ed-deshacer').disabled = ed.pos === 0; $('#ed-rehacer').disabled = ed.pos >= ed.hist.length - 1;
@@ -594,7 +660,7 @@ function alClicNota(pn, rs) {
 }
 function alCargar(song, key) {
   ed.activo = false; document.body.classList.remove('modo-edicion');
-  ed.ov = {}; ed.extra = 0; ed.hist = [{ ov: {}, extra: 0 }]; ed.pos = 0; ed.key = null; ed.rs = null; ed.nuevoId = 0;
+  ed.ov = {}; ed.extra = 0; ed.warps = []; ed.hist = [{ ov: {}, extra: 0, warps: [] }]; ed.pos = 0; ed.key = null; ed.rs = null; ed.nuevoId = 0;
   ed.libId = key && key.indexOf('lib|') === 0 ? key.slice(4) : null;
   ed.nMeasBase = song.nMeas;
   ed.base = new Map();
@@ -626,6 +692,7 @@ function init() {
   $('#ed-prev').addEventListener('click', () => vecina(-1));
   $('#ed-next').addEventListener('click', () => vecina(1));
   $('#ed-silencio').addEventListener('click', convertirEnSilencio);
+  $('#ed-quitar-sil').addEventListener('click', quitarSilencio);
   DURACIONES.forEach((d) => { const o = document.createElement('option'); o.value = d.l; o.textContent = `${d.n} (${d.l})`; $('#ed-ins-dur').appendChild(o); });
   $('#ed-ins-dur').value = '1';
   $('#ed-ins-nota').addEventListener('click', () => insertarDesdePanel(true));

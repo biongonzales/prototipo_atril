@@ -218,7 +218,7 @@ function guardarVersion(idOrigen, base64, meta, resumen) {
     const ent = function (x) { return Math.max(0, Math.min(100000, Math.floor(Number(x)) || 0)); };
     limpio.cambios = {
       total: ent(r.total), duraciones: ent(r.duraciones), alturas: ent(r.alturas), agregadas: ent(r.agregadas),
-      sustituidas: ent(r.sustituidas), letras: ent(r.letras), compases: ent(r.compases)
+      sustituidas: ent(r.sustituidas), letras: ent(r.letras), compases: ent(r.compases), sincronizadas: ent(r.sincronizadas)
     };
     archivo.setDescription(JSON.stringify(limpio));
     return itemMidi_(archivo);

@@ -159,6 +159,7 @@
               <div class="edicion-grupo">
                 <span class="ed-etiqueta" id="ed-dur-etiqueta">Duración</span>
                 <div class="ed-durs" id="ed-durs" role="group" aria-labelledby="ed-dur-etiqueta"></div>
+                <label class="ed-sync" title="Al cambiar una duración o insertar tiempo, todas las voces cambian igual y siguen alineadas. Desmárcalo para tocar solo esta voz."><input type="checkbox" id="ed-sync" checked> Mover todas las voces juntas (recomendado)</label>
               </div>
               <div class="edicion-fila">
                 <div class="edicion-grupo">
@@ -180,6 +181,7 @@
                   <span class="ed-etiqueta">Silencio</span>
                   <div class="ed-btns">
                     <button type="button" class="btn btn-chico" id="ed-silencio" title="La nota deja de sonar y queda un silencio (Supr)"><i data-lucide="eraser"></i><span>Convertir en silencio</span></button>
+                    <button type="button" class="btn btn-chico" id="ed-quitar-sil" title="Elige un silencio y ciérralo: lo que sigue se acerca" disabled><i data-lucide="scissors"></i><span>Quitar silencio</span></button>
                   </div>
                 </div>
                 <div class="edicion-grupo">
@@ -292,8 +294,9 @@
               <li><strong>Convertir una nota en silencio:</strong> botón «Convertir en silencio» (o la tecla Supr). Para dejar un silencio al final de una nota, acórtala: lo que sobra queda como silencio.</li>
               <li><strong>Añadir compases:</strong> «Añadir compás» suma un compás de silencio al final de la pieza, por si quieres escribir algo después de la última nota. «−» quita los añadidos mientras estén vacíos.</li>
               <li><strong>Letra:</strong> con una nota elegida, escribe la sílaba o el texto en «Letra bajo la nota». Enter (o Tab) guarda y pasa a la nota siguiente, Mayús+Tab a la anterior. La letra queda en el MIDI como letra estándar y se ve siempre bajo las notas en el Ensayo.</li>
-              <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Si acortas, lo que sobra queda como silencio. Si alargas, primero se usa el silencio que sigue; si aun así pisa otra nota, esa nota y las siguientes se corren (pasan al compás siguiente) y nunca se borran. La pieza crece sola con compases nuevos si hace falta.</li>
+              <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Con «Mover todas las voces juntas» marcado (lo normal), todas las voces cambian igual: si alargas una nota, lo que suena a la vez en las demás voces se estira lo mismo y todo lo que sigue se corre, así el coro no se desalinea y no aparecen silencios nuevos. Desmárcalo para tocar solo la voz elegida: entonces, al acortar, lo que sobra queda como silencio y, al alargar, las notas siguientes de esa voz se corren (nunca se borran). La pieza crece sola con compases nuevos si hace falta.</li>
               <li><strong>Insertar:</strong> con una nota (o un silencio) elegida, escoge una duración y pulsa «Nota» o «Silencio» para meterla antes o después de la nota elegida; todo lo que sigue se corre para hacerle sitio.</li>
+              <li><strong>Quitar un silencio:</strong> elige el silencio y pulsa «Quitar silencio»: el hueco se cierra y lo que sigue se acerca. Con todas las voces juntas solo se permite si ninguna otra voz suena en ese tramo (si suena, alarga mejor la nota anterior).</li>
               <li><strong>Altura:</strong> ±½ tono o ±8ª (también con ↑ ↓). Se oye la nota al cambiarla y se avisa si queda fuera del rango habitual de la voz.</li>
               <li><strong>Deshacer / Rehacer:</strong> Ctrl+Z y Ctrl+Y. «Descartar» vuelve a la pieza tal como se abrió.</li>
               <li><strong>Guardar versión:</strong> crea una pieza nueva en la Biblioteca llamada «TÍTULO V1», luego «V2», etc. El archivo original nunca se modifica.</li>
