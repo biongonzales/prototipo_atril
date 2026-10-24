@@ -8,8 +8,9 @@
    - El archivo original nunca se modifica; cada guardado es un archivo nuevo.
    - Se edita sobre los eventos originales del MIDI: solo cambian las notas tocadas; tempo, instrumentos,
      controladores, etc. se conservan. La letra se guarda como eventos de letra estándar (meta 0x05).
-   - La duración se respeta: ninguna nota hace correr a las demás y cada compás sigue completo
-     (lo que sobra al acortar es silencio). Alargar sobre otra nota pide confirmación.
+   - Acortar deja un silencio (nada se corre). Alargar usa primero el silencio que sigue; si aun así pisa otra nota,
+     esa nota y las siguientes se corren (pasan al compás siguiente si hace falta) y nunca se borran. Insertar una
+     nota o un silencio entre otras corre todo lo que sigue. La pieza crece con compases nuevos si hace falta.
    - Si la voz tiene notas simultáneas (divisi), solo se editan las notas visibles; las demás no se tocan.
    ============================================================ */
 (() => {
@@ -281,29 +282,77 @@ function huecoEn(ini) {
   return ini < total - EPS ? { ini, desde, fin } : null;
 }
 
-async function cambiarDuracion(L) {
+// Corre hacia delante, solo lo necesario, las notas desde la posición `desde` para que ninguna quede pisada
+// por algo que termina en `cursor`. Anota los cambios en c y devuelve cuántas notas se corrieron y dónde acaba todo.
+function cascada(desde, cursor, c) {
+  const l = linea();
+  let movidas = 0, fin = cursor;
+  for (let j = l.findIndex((m) => m.start >= desde - EPS); j >= 0 && j < l.length; j++) {
+    const m = l[j];
+    if (m.start >= cursor - EPS) break;
+    const d = cursor - m.start;
+    c[m.key] = { start: m.start + d, end: m.end + d };
+    cursor = m.end + d; fin = cursor; movidas++;
+  }
+  return { movidas, fin };
+}
+// Corre todas las notas desde `desde` exactamente `delta` pulsos (para insertar algo en medio).
+function correr(desde, delta, c) {
+  let movidas = 0, fin = 0;
+  linea().forEach((m) => { if (m.start >= desde - EPS) { c[m.key] = { start: m.start + delta, end: m.end + delta }; movidas++; fin = Math.max(fin, m.end + delta); } });
+  return { movidas, fin };
+}
+// Si la voz queda más larga que la pieza, se añaden los compases que hagan falta. false si se pasa del máximo.
+function asegurarCompases(fin) {
+  const song = S().song, faltan = Math.ceil(fin / song.mb - EPS) - song.nMeas;
+  if (faltan <= 0) return true;
+  if (ed.extra + faltan > MAX_COMPASES_EXTRA) { aviso('La pieza no puede crecer tanto (máximo ' + MAX_COMPASES_EXTRA + ' compases añadidos).'); return false; }
+  ed.extra += faltan;
+  return true;
+}
+const avisoCorridas = (m) => { if (m) toastBase('info', m === 1 ? 'La nota siguiente se corrió.' : `Las ${m} notas siguientes se corrieron.`); };
+
+function cambiarDuracion(L) {
   if (ed.rs) { insertarNota(L); return; }
   const l = linea(), idx = idxDe(ed.key);
   if (idx < 0) return;
   const n = l[idx], nuevoFin = n.start + L;
   if (Math.abs(n.end - n.start - L) < EPS) return;
-  if (nuevoFin > S().song.total + EPS) { aviso('No cabe: la nota terminaría después del final de la pieza.'); return; }
   const c = {};
-  if (nuevoFin > n.end + EPS) {
-    const ch = pisadas(idx, nuevoFin);
-    if (ch.length) {
-      const nombres = ch.map((j) => nombreNota(l[j].midi)).join(', ');
-      const ok = await confirmar({
-        title: 'Esa duración pisa la nota siguiente',
-        html: `Alargar a <b>${esc(nombreDur(L))}</b> sustituirá ${ch.length === 1 ? 'la nota' : 'las ' + ch.length + ' notas'} <b>${esc(nombres)}</b>.<br>El resto de la pieza no se mueve.`,
-        confirmButtonText: 'Alargar y sustituir', cancelButtonText: 'Cancelar'
-      });
-      if (!ok) return;
-      ch.forEach((j) => { const m = l[j]; c[m.key] = m.end <= nuevoFin + EPS ? { del: true } : { start: nuevoFin }; });
-    }
-  }
+  let r = { movidas: 0, fin: nuevoFin };
+  if (nuevoFin > n.end + EPS) r = cascada(n.end, nuevoFin, c);   // alargar: las notas que estorban se corren al compás siguiente
   c[n.key] = { end: nuevoFin };
+  if (!asegurarCompases(r.fin)) return;
   aplicar(c);
+  avisoCorridas(r.movidas);
+}
+
+// Insertar entre notas: en la posición elegida (antes o después de la nota, o el punto del silencio) se hace sitio
+// y todo lo que viene después se corre. `nota`: escribe una nota nueva; si no, solo deja un silencio.
+function insertarEn(pos, L, nota) {
+  const v = P.voz();
+  if (v.t === undefined) { aviso('Esta voz no se puede editar.'); return; }
+  const c = {}, l = linea();
+  const r = correr(pos, L, c);
+  let key = null;
+  if (nota) {
+    let prev = null, sig = null;
+    l.forEach((m) => { if (m.end <= pos + EPS && (!prev || m.end >= prev.end)) prev = m; if (m.start >= pos - EPS && !sig) sig = m; });
+    const midi = prev ? prev.midi : sig ? sig.midi : Math.round(v.med);
+    const vels = v.base.map((b) => b.vel).filter(Boolean).sort((a, b) => a - b);
+    key = '+' + (++ed.nuevoId);
+    c[key] = { nuevo: true, t: v.t, ch: v.ch, midi, start: pos, end: pos + L, vel: vels.length ? vels[vels.length >> 1] : 80 };
+  }
+  if (!asegurarCompases(Math.max(r.fin, pos + L))) { if (key) ed.nuevoId--; return; }
+  aplicar(c);
+  if (key) elegir(key, true); else elegirSilencio(pos);
+  avisoCorridas(r.movidas);
+}
+function insertarDesdePanel(nota) {
+  const L = +$('#ed-ins-dur').value, n = linea()[idxDe(ed.key)], h = !n && ed.rs ? huecoEn(ed.rs.ini) : null;
+  if (!n && !h) return;
+  const antes = $('#ed-ins-pos').value === 'antes';
+  insertarEn(n ? (antes ? n.start : n.end) : h.ini, L, nota);
 }
 
 function cambiarAltura(d) {
@@ -317,20 +366,24 @@ function cambiarAltura(d) {
   if (!P.reproduciendo()) P.previsualizar(m);
 }
 
-// Escribir una nota en el silencio elegido: empieza donde empieza el silencio y no puede pasar del siguiente sonido.
+// Escribir una nota en el silencio elegido: empieza donde empieza el silencio; si es más larga que el hueco, corre las siguientes.
 function insertarNota(L) {
   const v = P.voz(), h = ed.rs && huecoEn(ed.rs.ini);
   if (!h) return;
   if (v.t === undefined) { aviso('Esta voz no se puede editar.'); return; }
-  if (h.ini + L > h.fin + EPS) { aviso('No cabe: el silencio es más corto que esa duración.'); return; }
-  const l = linea();
+  const l = linea(), c = {};
+  let r = { movidas: 0, fin: h.ini + L };
+  if (h.ini + L > h.fin + EPS) r = cascada(h.fin, h.ini + L, c);   // no cabe en el hueco: las siguientes se corren
+  if (!asegurarCompases(r.fin)) return;
   let prev = null, sig = null;
   l.forEach((n) => { if (n.end <= h.ini + EPS && (!prev || n.end >= prev.end)) prev = n; if (n.start >= h.ini - EPS && !sig) sig = n; });
   const midi = prev ? prev.midi : sig ? sig.midi : Math.round(v.med);   // empieza con la altura de la nota vecina
   const vels = v.base.map((b) => b.vel).filter(Boolean).sort((a, b) => a - b);
   const key = '+' + (++ed.nuevoId);
-  aplicar({ [key]: { nuevo: true, t: v.t, ch: v.ch, midi, start: h.ini, end: h.ini + L, vel: vels.length ? vels[vels.length >> 1] : 80 } });
+  c[key] = { nuevo: true, t: v.t, ch: v.ch, midi, start: h.ini, end: h.ini + L, vel: vels.length ? vels[vels.length >> 1] : 80 };
+  aplicar(c);
   elegir(key, true);
+  avisoCorridas(r.movidas);
 }
 
 // La nota deja de sonar y en su lugar queda un silencio, que se puede elegir para escribir otra nota.
@@ -470,23 +523,24 @@ function actualizarPanel() {
   }
   $('#ed-dur-etiqueta').textContent = h ? 'Escribir una nota de…' : 'Duración';
 
-  const total = S().song.total;
   document.querySelectorAll('#ed-durs button').forEach((x) => {
     const L = +x.dataset.l, base = `${nombreDur(L)} (${L} tiempo${L === 1 ? '' : 's'})`;
     if (h) {
       const cabe = h.ini + L <= h.fin + EPS;
-      x.classList.remove('activo', 'choca');
-      x.disabled = !cabe;
-      x.title = base + (cabe ? ' · escribe una nota aquí' : ' · no cabe en este silencio');
+      x.classList.remove('activo'); x.classList.toggle('choca', !cabe);
+      x.disabled = false;
+      x.title = base + (cabe ? ' · escribe una nota aquí' : ' · no cabe en el silencio: las notas siguientes se corren');
       return;
     }
     const largo = n ? n.end - n.start : 0, fin = n ? n.start + L : 0;
     x.classList.toggle('activo', !!n && Math.abs(largo - L) < EPS);
-    x.disabled = !n || fin > total + EPS;
+    x.disabled = !n;
     const pisa = !!n && fin > n.end + EPS && pisadas(i, fin).length > 0;
     x.classList.toggle('choca', pisa);
-    x.title = base + (n && fin > total + EPS ? ' · no cabe antes del final' : pisa ? ' · pisaría la nota siguiente' : '');
+    x.title = base + (pisa ? ' · las notas siguientes se corren' : '');
   });
+  $('#ed-ins-nota').disabled = !n && !h; $('#ed-ins-sil').disabled = !n && !h;
+  $('#ed-ins-pos').disabled = !n;
   ['ed-oct-bajar', 'ed-semi-bajar', 'ed-semi-subir', 'ed-oct-subir', 'ed-silencio'].forEach((id) => { $('#' + id).disabled = !n; });
   $('#ed-prev').disabled = !l.length; $('#ed-next').disabled = !l.length;
   $('#ed-deshacer').disabled = ed.pos === 0; $('#ed-rehacer').disabled = ed.pos >= ed.hist.length - 1;
@@ -572,6 +626,10 @@ function init() {
   $('#ed-prev').addEventListener('click', () => vecina(-1));
   $('#ed-next').addEventListener('click', () => vecina(1));
   $('#ed-silencio').addEventListener('click', convertirEnSilencio);
+  DURACIONES.forEach((d) => { const o = document.createElement('option'); o.value = d.l; o.textContent = `${d.n} (${d.l})`; $('#ed-ins-dur').appendChild(o); });
+  $('#ed-ins-dur').value = '1';
+  $('#ed-ins-nota').addEventListener('click', () => insertarDesdePanel(true));
+  $('#ed-ins-sil').addEventListener('click', () => insertarDesdePanel(false));
   $('#ed-comp-mas').addEventListener('click', agregarCompas);
   $('#ed-comp-menos').addEventListener('click', quitarCompas);
   $('#ed-deshacer').addEventListener('click', deshacer);

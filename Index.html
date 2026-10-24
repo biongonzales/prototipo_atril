@@ -161,6 +161,17 @@
                 <div class="ed-durs" id="ed-durs" role="group" aria-labelledby="ed-dur-etiqueta"></div>
               </div>
               <div class="edicion-fila">
+                <div class="edicion-grupo">
+                  <span class="ed-etiqueta">Insertar en medio</span>
+                  <div class="ed-btns">
+                    <select id="ed-ins-dur" class="ed-select" aria-label="Duración a insertar"></select>
+                    <select id="ed-ins-pos" class="ed-select" aria-label="Posición respecto a la nota elegida"><option value="despues">Después de la nota</option><option value="antes">Antes de la nota</option></select>
+                    <button type="button" class="btn btn-chico" id="ed-ins-nota" title="Escribe una nota nueva y corre lo que sigue" disabled><i data-lucide="music"></i><span>Nota</span></button>
+                    <button type="button" class="btn btn-chico" id="ed-ins-sil" title="Deja un silencio y corre lo que sigue" disabled><i data-lucide="pause"></i><span>Silencio</span></button>
+                  </div>
+                </div>
+              </div>
+              <div class="edicion-fila">
                 <div class="edicion-grupo ed-letra-grupo">
                   <label class="ed-etiqueta" for="ed-letra">Letra bajo la nota</label>
                   <input id="ed-letra" type="text" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Sílaba o texto · Enter pasa a la siguiente nota" disabled>
@@ -281,7 +292,8 @@
               <li><strong>Convertir una nota en silencio:</strong> botón «Convertir en silencio» (o la tecla Supr). Para dejar un silencio al final de una nota, acórtala: lo que sobra queda como silencio.</li>
               <li><strong>Añadir compases:</strong> «Añadir compás» suma un compás de silencio al final de la pieza, por si quieres escribir algo después de la última nota. «−» quita los añadidos mientras estén vacíos.</li>
               <li><strong>Letra:</strong> con una nota elegida, escribe la sílaba o el texto en «Letra bajo la nota». Enter (o Tab) guarda y pasa a la nota siguiente, Mayús+Tab a la anterior. La letra queda en el MIDI como letra estándar y se ve siempre bajo las notas en el Ensayo.</li>
-              <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Nada se corre: si acortas, lo que sobra queda como silencio, y los compases siguen completos. Si alargas sobre la nota siguiente, la app te avisa y tú decides si sustituirla.</li>
+              <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Si acortas, lo que sobra queda como silencio. Si alargas, primero se usa el silencio que sigue; si aun así pisa otra nota, esa nota y las siguientes se corren (pasan al compás siguiente) y nunca se borran. La pieza crece sola con compases nuevos si hace falta.</li>
+              <li><strong>Insertar:</strong> con una nota (o un silencio) elegida, escoge una duración y pulsa «Nota» o «Silencio» para meterla antes o después de la nota elegida; todo lo que sigue se corre para hacerle sitio.</li>
               <li><strong>Altura:</strong> ±½ tono o ±8ª (también con ↑ ↓). Se oye la nota al cambiarla y se avisa si queda fuera del rango habitual de la voz.</li>
               <li><strong>Deshacer / Rehacer:</strong> Ctrl+Z y Ctrl+Y. «Descartar» vuelve a la pieza tal como se abrió.</li>
               <li><strong>Guardar versión:</strong> crea una pieza nueva en la Biblioteca llamada «TÍTULO V1», luego «V2», etc. El archivo original nunca se modifica.</li>
