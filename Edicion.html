@@ -563,7 +563,7 @@ async function guardarLetra(r) {
   const meta = window.Ensayo.analizar(bytes.buffer);
   meta.compases = compases;
   const it = await ejecutar('actualizarMidi', ed.libId, aBase64(bytes), meta);
-  window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases);
+  window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases, it.meta);
   toastExito('Letra guardada en ' + it.titulo);
 }
 async function guardarVersion() {
@@ -587,7 +587,7 @@ async function guardarVersion() {
     meta.compases = compases;   // incluye los compases de silencio añadidos
     const it = await ejecutar('guardarVersion', ed.libId, aBase64(bytes), meta, r);
     // Se abre la versión recién guardada: ahí se podrá seguir editando para crear la siguiente.
-    window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases);
+    window.Ensayo.cargarMidi(bytes.buffer, it.titulo, 'lib|' + it.id, compases, it.meta);
     toastExito('Guardado como ' + it.titulo);
   } catch (e) {
     toastError((e && e.message ? String(e.message).replace(/^(Error|Exception):\s*/, '') : 'No se pudo guardar la versión.'));

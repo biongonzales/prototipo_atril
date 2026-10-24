@@ -480,8 +480,10 @@
     /* Partitura: el título, Editar y el zoom caben en una sola línea, más pequeños */
     .head-partitura { flex-wrap: nowrap; gap: 8px; }
     .head-partitura .partitura-acciones { flex-wrap: nowrap; gap: 6px; margin-left: auto; }
+    .head-partitura #btnPdf { padding: 0; width: 32px; min-height: 30px; justify-content: center; }
+    .head-partitura #btnPdf .txt-pc { display: none; }
     .head-partitura #btnEditar { padding: 3px 10px; min-height: 30px; font-size: 13px; gap: 5px; }
-    .head-partitura #btnEditar svg { width: 15px; height: 15px; }
+    .head-partitura #btnEditar svg, .head-partitura #btnPdf svg { width: 15px; height: 15px; }
     .head-partitura .zoom-ctl { padding: 2px; }
     .head-partitura .zoom-ctl button { min-width: 28px; height: 28px; }
     .head-partitura .zoom-ctl svg { width: 15px; height: 15px; }

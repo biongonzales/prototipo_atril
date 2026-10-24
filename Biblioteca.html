@@ -80,7 +80,7 @@ function filaItem(it) {
     try {
       if (!window.Ensayo) throw new Error('El módulo de ensayo no está disponible. Recarga la página.');
       const r = await ejecutar('obtenerMidi', it.id);
-      window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id, it.meta && it.meta.compases);
+      window.Ensayo.cargarMidi(deBase64(r.base64), r.titulo, 'lib|' + it.id, it.meta && it.meta.compases, it.meta);
       mostrarPanel('ensayo');
     } catch (e) { toastError(mensajeDe(e, 'No se pudo abrir el MIDI.')); }
     finally { b.disabled = false; etiqueta(); refrescarIconos(); }
@@ -125,6 +125,7 @@ async function editarDatos(it, boton) {
     const nuevo = await ejecutar('actualizarDatos', it.id, r.value);
     const i = est.items.findIndex((x) => x.id === it.id);
     if (i >= 0) est.items[i] = nuevo;
+    if (window.Ensayo && window.Ensayo.claveActual() === 'lib|' + it.id) window.Ensayo.actualizarDatos(nuevo.meta);
     if (nuevo.titulo !== it.titulo) est.items = await ejecutar('listarMidis');   // las versiones también cambian de nombre
     renderTabla();
     toastExito('Datos actualizados');

@@ -281,10 +281,13 @@ function buildMeasures(notes, mb, nMeas, compuesto) {
 const curVoice = () => state.song.voices[state.voiceIdx];
 const curLine = () => curVoice().line;
 
-function renderScore() {
-  const host = $('#score');
+// opts (solo para el PDF): { host, width, desde, hasta, soloContar } dibuja los sistemas [desde, hasta) en otro contenedor,
+// sin zoom, sin áreas de clic y sin tocar la pantalla; con soloContar devuelve cuántos sistemas salen.
+function renderScore(opts) {
+  const pdf = !!(opts && opts.host);
+  const host = pdf ? opts.host : $('#score');
   host.innerHTML = '';
-  ui.pieces = []; ui.beams = []; ui.mrects = []; ui.nowIdx = -1; ui.nowSys = -1;
+  if (!pdf) { ui.pieces = []; ui.beams = []; ui.mrects = []; ui.nowIdx = -1; ui.nowSys = -1; }
   if (!state.song || !window.Vex) return;
   const VF = Vex.Flow, song = state.song, ts = song.ts, mb = song.mb;
   const cfg = CLEFS[clefFor(curVoice())];
@@ -292,9 +295,9 @@ function renderScore() {
   const measures = buildMeasures(curLine(), mb, song.nMeas, esCompuesto(ts));
   // Zoom: el pentagrama se compone con un ancho lógico W = ancho disponible / zoom y el SVG se muestra a W * zoom.
   // Con zoom < 1 caben más compases por línea; con zoom > 1 se ve más grande y, si no cabe, se desplaza en horizontal.
-  const hostW = host.clientWidth || 600, z = state.zoom;
-  const W = Math.max(280, hostW / z);
-  ui.lastW = hostW;
+  const hostW = pdf ? opts.width : (host.clientWidth || 600), z = pdf ? 1 : state.zoom;
+  const W = pdf ? opts.width : Math.max(280, hostW / z);
+  if (!pdf) ui.lastW = hostW;
   const padL = 6, avail = W - padL - 8;
   const firstExtra = (mi) => 50 + (keyN ? keyN * 10 + 8 : 0) + (mi === 0 ? 30 : 0);
   // Ancho mínimo del compás: 30 por figura, o más si la letra de una sílaba necesita sitio para no pisar a la vecina.
@@ -309,7 +312,10 @@ function renderScore() {
   });
   if (cur.length) lines.push(cur);
 
-  const LH = 140 + 16 * (nEstrofas - 1), H = lines.length * LH + 12;
+  const LH = 140 + 16 * (nEstrofas - 1);
+  if (pdf && opts.soloContar) return { n: lines.length, LH };
+  const li0 = pdf ? opts.desde : 0, li1 = pdf ? Math.min(opts.hasta, lines.length) : lines.length;
+  const H = (li1 - li0) * LH + 12;
   const renderer = new VF.Renderer(host, VF.Renderer.Backends.SVG);
   renderer.resize(W, H);
   const ctx = renderer.getContext();
@@ -324,6 +330,7 @@ function renderScore() {
   let prevTie = null;
 
   lines.forEach((ms, li) => {
+    if (li < li0 || li >= li1) return;
     const lyrics = [];
     let pieSistema = 0;   // lo más bajo que llega el dibujo de las notas (cabezas, plicas y barras) en este sistema
     const extraFirst = firstExtra(ms[0]);
@@ -332,7 +339,7 @@ function renderScore() {
     let x = padL;
     ms.forEach((mi, k) => {
       const w = Math.round(base[mi] * f + (k === 0 ? extraFirst : 0));
-      const y = li * LH;
+      const y = (li - li0) * LH;
       const stave = new VF.Stave(x, y, w);
       if (k === 0) {
         if (cfg.ann) stave.addClef(cfg.vf, 'default', cfg.ann); else stave.addClef(cfg.vf);
@@ -342,12 +349,15 @@ function renderScore() {
       if (mi === measures.length - 1) stave.setEndBarType(VF.Barline.type.END);
       stave.setContext(ctx).draw();
 
-      const rect = document.createElementNS(NS, 'rect');
-      rect.setAttribute('class', 'mrect'); rect.setAttribute('data-m', mi);
-      rect.setAttribute('x', x); rect.setAttribute('y', y + 18); rect.setAttribute('width', w); rect.setAttribute('height', 104);
-      hitLayer.appendChild(rect); ui.mrects[mi] = rect;
+      if (!pdf) {
+        const rect = document.createElementNS(NS, 'rect');
+        rect.setAttribute('class', 'mrect'); rect.setAttribute('data-m', mi);
+        rect.setAttribute('x', x); rect.setAttribute('y', y + 18); rect.setAttribute('width', w); rect.setAttribute('height', 104);
+        hitLayer.appendChild(rect); ui.mrects[mi] = rect;
+      }
       const num = document.createElementNS(NS, 'text');
       num.setAttribute('class', 'mnum'); num.setAttribute('x', x + 4); num.setAttribute('y', y + 30);
+      if (pdf) { num.setAttribute('font-size', 10); num.setAttribute('font-family', 'Helvetica, Arial, sans-serif'); num.setAttribute('fill', '#555'); num.setAttribute('stroke', 'none'); }
       num.textContent = mi + 1; hitLayer.appendChild(num);
 
       const alts = keyAlts(sf), accState = {};
@@ -383,7 +393,7 @@ function renderScore() {
         pieSistema = Math.max(pieSistema, stave.getBottomLineY());
         if (it.letras && it.letras.some((t) => t)) lyrics.push({ txts: it.letras, x: (n.getNoteHeadBeginX() + n.getNoteHeadEndX()) / 2 });
         const piece = { g, noteIdx: it.rest ? -1 : it.noteIdx, sys: li, rs: it.rest ? { ini: it.ini, len: it.len } : null };
-        try {
+        if (!pdf) try {
           const bb = g.getBBox(), r = document.createElementNS(NS, 'rect');
           r.setAttribute('class', 'hit'); r.setAttribute('x', bb.x - 5); r.setAttribute('y', y + 22);
           r.setAttribute('width', bb.width + 10); r.setAttribute('height', 96);
@@ -422,16 +432,82 @@ function renderScore() {
           const t = document.createElementNS(NS, 'text');
           t.setAttribute('class', 'letra'); t.setAttribute('x', l.x); t.setAttribute('y', y0 + r * 16);
           t.setAttribute('text-anchor', 'middle'); t.setAttribute('pointer-events', 'none');
-          t.setAttribute('font-family', 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
+          t.setAttribute('font-family', pdf ? 'Helvetica, Arial, sans-serif' : 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
+          if (pdf) { t.setAttribute('fill', '#000'); t.setAttribute('stroke', 'none'); }
           t.textContent = txt;
           svg.appendChild(t);
         });
       });
     }
   });
+  if (pdf) return { n: lines.length, LH };
   host.querySelector('svg').addEventListener('click', onScoreClick);
   applySelection();
   if (hooks.alRenderizar) hooks.alRenderizar();
+}
+
+/* ------------------------------------------------------------ PDF de la partitura */
+const LIBS_PDF = ['https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js', 'https://cdn.jsdelivr.net/npm/svg2pdf.js@2.2.4/dist/svg2pdf.umd.min.js'];
+let libsPdf = null;
+function cargarLibsPdf() {
+  if (window.jspdf && window.svg2pdf) return Promise.resolve();
+  if (libsPdf) return libsPdf;
+  const cargar = (src) => new Promise((ok, ko) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => ko(new Error('No se pudo cargar el generador de PDF. Revisa tu conexión.')); document.head.appendChild(s); });
+  libsPdf = cargar(LIBS_PDF[0]).then(() => cargar(LIBS_PDF[1])).catch((e) => { libsPdf = null; throw e; });
+  return libsPdf;
+}
+// Dibuja los sistemas [desde, hasta) en un contenedor fuera de pantalla y lo devuelve (hay que quitarlo después).
+function partituraParaPdf(width, desde, hasta, soloContar) {
+  const tmp = document.createElement('div');
+  tmp.style.cssText = 'position:absolute;left:-99999px;top:0;background:#fff;width:' + width + 'px';
+  document.body.appendChild(tmp);
+  const guardado = { pieces: ui.pieces, beams: ui.beams, mrects: ui.mrects, nowIdx: ui.nowIdx, nowSys: ui.nowSys, lastW: ui.lastW };
+  ui.pieces = []; ui.beams = []; ui.mrects = [];   // el dibujo para el PDF no debe mezclarse con el de la pantalla
+  let r;
+  try { r = renderScore({ host: tmp, width, desde, hasta, soloContar }); } finally { Object.assign(ui, guardado); }
+  return { tmp, r };
+}
+// Título al centro, voz como subtítulo, arreglo a la izquierda y compositor a la derecha; después, toda la partitura.
+async function generarPdf() {
+  await cargarLibsPdf();
+  const { jsPDF } = window.jspdf, song = state.song;
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+  const PW = doc.internal.pageSize.getWidth(), PH = doc.internal.pageSize.getHeight(), M = 36;
+  const ancho = PW - 2 * M, WLOG = 720, esc = ancho / WLOG;
+  const voz = curVoice().name.replace(/\s*\(canal.*\)/, '');
+  const datos = song.datos || {};
+
+  doc.setFont('times', 'normal');
+  let tam = 26; doc.setFontSize(tam);
+  while (tam > 14 && doc.getTextWidth(song.title) > ancho - 20) { tam -= 1; doc.setFontSize(tam); }
+  doc.text(song.title, PW / 2, M + 24, { align: 'center' });
+  doc.setFontSize(14); doc.text('Voz ' + voz, PW / 2, M + 48, { align: 'center' });
+  doc.setFontSize(12);
+  if (datos.arreglo) doc.text('Arreglo: ' + datos.arreglo, M, M + 84);
+  if (datos.compositor) doc.text(datos.compositor, PW - M, M + 84, { align: 'right' });
+  const cab = 100;   // alto que ocupa el encabezado en la primera página
+
+  const c = partituraParaPdf(WLOG, 0, 0, true); c.tmp.remove();
+  const total = c.r.n, alto = c.r.LH * esc;
+  let desde = 0, primera = true;
+  while (desde < total) {
+    const libre = PH - M - (primera ? M + cab : M);
+    const caben = Math.max(1, Math.floor((libre - 12 * esc) / alto));
+    const hasta = Math.min(total, desde + caben);
+    const p = partituraParaPdf(WLOG, desde, hasta, false);
+    try {
+      const svg = p.tmp.querySelector('svg');
+      await doc.svg(svg, { x: M, y: primera ? M + cab : M, width: ancho, height: (hasta - desde) * alto + 12 * esc });
+    } finally { p.tmp.remove(); }
+    desde = hasta; primera = false;
+    if (desde < total) doc.addPage();
+  }
+  return doc;
+}
+async function exportarPdf() {
+  const doc = await generarPdf();
+  const voz = curVoice().name.replace(/\s*\(canal.*\)/, '');
+  doc.save((state.song.title + ' - Voz ' + voz).replace(/[\\/:*?"<>|]+/g, ' ').trim() + '.pdf');
 }
 
 // Qué nota o compás hay bajo el puntero. Se mira toda la pila de elementos porque las líneas del pentagrama
@@ -852,6 +928,12 @@ function setControles(visibles, guardar) {
 }
 $('#zoomMenos').addEventListener('click', () => pasoZoom(-1));
 $('#zoomMas').addEventListener('click', () => pasoZoom(1));
+$('#btnPdf').addEventListener('click', async (e) => {
+  const b = e.currentTarget; b.disabled = true;
+  try { stopPlay(); await exportarPdf(); toastExito('PDF descargado'); }
+  catch (err) { toastError(err && err.message ? err.message : 'No se pudo generar el PDF.'); }
+  finally { b.disabled = false; }
+});
 $('#zoomValor').addEventListener('click', () => setZoom(1, true));
 $('#btnControles').addEventListener('click', () => setControles($('#ensayo-controles').classList.contains('oculto'), true));
 $('#btnSave').addEventListener('click', () => {
@@ -878,6 +960,10 @@ function boot() {
   $('#btnIrBiblioteca').addEventListener('click', () => { if (window.mostrarPanel) window.mostrarPanel('biblioteca'); });
   window.Ensayo = {
     sinPieza: () => !!state.sinPieza,
+    generarPdf,
+    exportarPdf,
+    // Cambia el compositor y el arreglo de la pieza abierta (se editan desde la Biblioteca).
+    actualizarDatos: (d) => { if (state.song) state.song.datos = { compositor: (d && d.compositor) || '', arreglo: (d && d.arreglo) || '' }; },
     claveActual: () => state.songKey,
     // Vuelve al ensayo en blanco (por ejemplo, si se elimina la pieza abierta).
     vaciar: () => { loadSong(sampleSong(), 'ejemplo'); state.sinPieza = true; aplicarVacio(); },
@@ -895,8 +981,9 @@ function boot() {
     // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
     // compases: número de compases guardado con la pieza; si es mayor que el que sale de las notas (compases de silencio
     // añadidos al final al editar), se respeta.
-    cargarMidi: (buf, titulo, clave, compases) => {
+    cargarMidi: (buf, titulo, clave, compases, datos) => {
       const song = buildSong(parseMidi(buf), titulo);
+      song.datos = { compositor: (datos && datos.compositor) || '', arreglo: (datos && datos.arreglo) || '' };
       if (compases > song.nMeas && compases <= 2000) { song.nMeas = Math.floor(compases); song.total = song.nMeas * song.mb; }
       loadSong(song, clave);
     },
