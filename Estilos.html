@@ -627,6 +627,16 @@
   }
   .modal-label input:focus { outline: 2px solid var(--teal-600); border-color: transparent; }
   .modal-campo { margin-top: 12px; }
+  /* Ventanas de confirmación y edición (SweetAlert2): misma letra y tamaños que el resto de la app */
+  .swal2-popup, .swal2-popup .swal2-title, .swal2-popup .swal2-html-container, .swal2-popup .swal2-input, .swal2-popup .swal2-validation-message,
+  .swal2-popup .swal2-styled { font-family: 'Outfit', 'Segoe UI', Roboto, Arial, sans-serif; }
+  .swal2-popup .swal2-title { font-size: 26px; font-weight: 600; line-height: 32px; padding: 0.4em 0.6em 0; }
+  .swal2-popup .swal2-html-container { font-size: 15px; }
+  .swal2-popup .swal2-input { font-size: 15px; font-weight: 500; height: 42px; padding: 0 12px; margin: 4px 0 0; box-shadow: none; }
+  .swal2-popup .swal2-styled { font-size: 14px; font-weight: 600; border-radius: 8px; padding: 9px 18px; }
+  .swal2-popup .swal2-validation-message { font-size: 13px; background: color-mix(in srgb, var(--rojo) 12%, var(--superficie)); color: var(--slate-900); margin: 10px 0 0; }
+  .swal-campo { font-weight: 500; }
+  @media (max-width: 640px) { .swal2-popup .swal2-title { font-size: 22px; line-height: 28px; } }
   .swal-campo { display: block; text-align: left; font-size: 14px; margin: 10px 0 0; }
   .swal-campo input { margin: 4px 0 0; width: 100%; box-sizing: border-box; }
   .swal-pieza { font-weight: 600; margin-bottom: 4px; }
