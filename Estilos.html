@@ -599,6 +599,20 @@
   .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--slate-800); cursor: pointer; }
   .check input { width: 18px; height: 18px; accent-color: var(--teal-700); flex-shrink: 0; }
   .ayuda-canto { font-size: 12px; color: var(--slate-500); }
+  .ayuda-canto:empty { display: none; }
+  #canto-diag { margin-top: 6px; overflow-wrap: anywhere; }
+  .canto-estado {
+    margin-top: 14px;
+    padding: 10px 14px;
+    border: 1px solid #bae6fd;
+    border-left: 4px solid #0ea5e9;
+    border-radius: 8px;
+    background: #f0f9ff;
+    color: #075985;
+    font-weight: 500;
+  }
+  .canto-estado:empty { display: none; }
+  :root[data-theme="dark"] .canto-estado { background: #0c2a3d; border-color: #155e75; border-left-color: #38bdf8; color: #bae6fd; }
 
   .canto-juego { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: var(--slate-50); }
   .canto-top {

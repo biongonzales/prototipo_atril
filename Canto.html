@@ -136,13 +136,34 @@ ejecutar('getPrefs').then((p) => {
 pintarAjustes();
 
 /* ------------------------------------------------------------------ micrófono */
-function mensajeMic(e) {
+// Qué sabe el navegador sobre el micrófono en esta ventana. Apps Script muestra la app dentro de un marco (iframe)
+// y el navegador solo deja usar el micrófono ahí si la política de permisos lo autoriza.
+async function diagnosticar() {
+  const d = { api: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia), seguro: window.isSecureContext, enMarco: window.top !== window, politica: 'desconocida', permiso: 'desconocido' };
+  try {
+    const pol = document.permissionsPolicy || document.featurePolicy;
+    if (pol && pol.allowsFeature) d.politica = pol.allowsFeature('microphone') ? 'permitida' : 'bloqueada';
+  } catch (e) { /* no disponible */ }
+  try { d.permiso = (await navigator.permissions.query({ name: 'microphone' })).state; } catch (e) { /* no disponible */ }
+  return d;
+}
+const si = (b) => (b ? 'sí' : 'no');
+function textoDiag(d, e) {
+  return 'Diagnóstico: error=' + ((e && e.name) || '–') + ' · contexto seguro=' + si(d.seguro) + ' · dentro de un marco=' + si(d.enMarco) + ' · política del micrófono=' + d.politica + ' · permiso=' + d.permiso;
+}
+// Mensaje para el usuario según la causa más probable.
+function mensajeMic(e, d) {
   const n = e && e.name;
-  if (n === 'NotAllowedError' || n === 'SecurityError') return 'No hay permiso para usar el micrófono. Permítelo en el navegador (icono del candado junto a la dirección) y vuelve a intentarlo. Si la app está incrustada en otra página, ábrela en su propia pestaña.';
-  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No se encontró ningún micrófono.';
-  if (n === 'NotReadableError') return 'El micrófono está en uso por otra aplicación.';
+  if (!d.api) return 'Este navegador no ofrece acceso al micrófono en esta ventana. Abre la app en Chrome, Edge o Firefox.';
+  if (!d.seguro) return 'El micrófono solo funciona en páginas seguras (https). Abre la app desde su dirección https.';
+  if (d.politica === 'bloqueada') return 'El navegador no permite el micrófono dentro de esta ventana incrustada. Abre la app directamente desde su dirección …/exec en una pestaña de Chrome (no dentro de otra página ni de un visor integrado como el de VS Code).';
+  if (d.permiso === 'denied') return 'El micrófono está bloqueado para este sitio. Pulsa el icono del candado o del micrófono en la barra de direcciones, elige «Permitir» y recarga la página.';
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'No se concedió el permiso del micrófono. Pulsa «Empezar» otra vez y elige «Permitir» en el aviso del navegador; si no aparece, mira el icono del micrófono en la barra de direcciones.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No se encontró ningún micrófono. Conecta uno y vuelve a intentarlo.';
+  if (n === 'NotReadableError') return 'El micrófono está en uso por otra aplicación. Ciérrala y vuelve a intentarlo.';
   return (e && e.message) || 'No se pudo activar el micrófono.';
 }
+function mostrarEstado(texto) { $('#canto-estado').textContent = texto; }
 function liberarMic() {
   try { if (est.stream) est.stream.getTracks().forEach((t) => t.stop()); } catch (e) { /* ya detenido */ }
   try { if (est.src) est.src.disconnect(); if (est.an) est.an.disconnect(); } catch (e) { /* ya desconectado */ }
@@ -154,7 +175,7 @@ function abrir() {
   const P = puente();
   if (!P) { toastError('El ensayo todavía no está listo.'); return; }
   $('#canto-voz-etiqueta').textContent = P.voz();
-  $('#canto-error').textContent = '';
+  $('#canto-error').textContent = ''; $('#canto-diag').textContent = ''; mostrarEstado('');
   $('#modal-canto').classList.remove('oculto');
   refrescarIconos();
   $('#canto-empezar').focus();
@@ -166,11 +187,18 @@ function cerrarAviso() {
 
 async function empezar() {
   const P = puente(), err = $('#canto-error'), btn = $('#canto-empezar');
-  err.textContent = '';
+  err.textContent = ''; $('#canto-diag').textContent = '';
   btn.disabled = true;
+  let d = { api: true, seguro: true, enMarco: false, politica: 'desconocida', permiso: 'desconocido' }, aviso = 0;
   try {
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Este navegador (o esta ventana incrustada) no permite usar el micrófono.');
     const ac = P.contexto();   // se crea y reanuda dentro del gesto del usuario
+    d = await diagnosticar();
+    // Si el navegador ya sabe que no se puede, se explica sin esperar a un aviso que no va a salir.
+    if (!d.api || !d.seguro || d.politica === 'bloqueada' || d.permiso === 'denied') throw new Error('micrófono no disponible');
+    mostrarEstado(d.permiso === 'granted'
+      ? 'Activando el micrófono…'
+      : 'Se necesita permiso para usar el micrófono. El navegador mostrará un aviso (arriba a la izquierda): pulsa «Permitir».');
+    aviso = setTimeout(() => mostrarEstado('Sigo esperando el permiso. Busca el aviso del navegador o el icono del micrófono o del candado en la barra de direcciones y elige «Permitir». Si no aparece ningún aviso, es probable que estés en un visor integrado (como el de VS Code): abre la dirección …/exec en Chrome.'), 6000);
     est.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       video: false
@@ -186,10 +214,14 @@ async function empezar() {
     est.an.smoothingTimeConstant = 0;
     est.src.connect(est.an);           // no se conecta a la salida: así no hay eco
     est.buf = new Float32Array(est.an.fftSize);
+    clearTimeout(aviso); mostrarEstado('');
     iniciarJuego();
   } catch (e) {
+    clearTimeout(aviso); mostrarEstado('');
     liberarMic();
-    err.textContent = mensajeMic(e);
+    if (!d.permiso || d.permiso === 'desconocido') d = Object.assign(d, { permiso: (await diagnosticar()).permiso });   // puede haber cambiado al rechazar
+    err.textContent = mensajeMic(e, d);
+    $('#canto-diag').textContent = textoDiag(d, e);
   } finally {
     btn.disabled = false;
   }
