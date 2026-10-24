@@ -100,17 +100,8 @@ function listarMidis() {
 function guardarMidi(titulo, base64, meta) {
   const nombre = String(titulo || '').replace(/\s+/g, ' ').trim();
   if (!TITULO_VALIDO.test(nombre)) throw new Error('El título debe estar en MAYÚSCULAS (letras, números y - _ ( ) . , \' # &).');
-  const bytes = Utilities.base64Decode(String(base64 || ''));
-  if (!bytes.length || bytes.length > MAX_MIDI_BYTES) throw new Error('El archivo está vacío o supera los 5 MB.');
-  if (bytes[0] !== 77 || bytes[1] !== 84 || bytes[2] !== 104 || bytes[3] !== 100) throw new Error('El archivo no es un MIDI válido.');
-
-  const m = meta || {};
-  const limpio = {
-    compas: String(m.compas || '').slice(0, 10),
-    bpm: isFinite(m.bpm) ? Number(m.bpm) : null,
-    compases: isFinite(m.compases) ? Number(m.compases) : null,
-    voces: (Array.isArray(m.voces) ? m.voces : []).slice(0, 32).map(function (v) { return String(v).slice(0, 60); })
-  };
+  const bytes = bytesMidi_(base64);
+  const limpio = metaLimpia_(meta);
 
   // El candado evita carpetas MIDIS duplicadas si se suben dos archivos a la vez.
   const lock = LockService.getUserLock();
@@ -128,6 +119,31 @@ function guardarMidi(titulo, base64, meta) {
 
 /** Devuelve { titulo, base64 } de un MIDI de la biblioteca. Solo atiende archivos de la carpeta MIDIS. */
 function obtenerMidi(id) {
+  const archivo = archivoEnMidis_(id).archivo;
+  return { titulo: archivo.getName().replace(/\.midi?$/i, ''), base64: Utilities.base64Encode(archivo.getBlob().getBytes()) };
+}
+
+// Valida que el contenido (base64) sea un MIDI de tamaño razonable y devuelve sus bytes.
+function bytesMidi_(base64) {
+  const bytes = Utilities.base64Decode(String(base64 || ''));
+  if (!bytes.length || bytes.length > MAX_MIDI_BYTES) throw new Error('El archivo está vacío o supera los 5 MB.');
+  if (bytes[0] !== 77 || bytes[1] !== 84 || bytes[2] !== 104 || bytes[3] !== 100) throw new Error('El archivo no es un MIDI válido.');
+  return bytes;
+}
+
+// Deja solo los campos esperados de lo que la app reconoció del MIDI.
+function metaLimpia_(meta) {
+  const m = meta || {};
+  return {
+    compas: String(m.compas || '').slice(0, 10),
+    bpm: isFinite(m.bpm) ? Number(m.bpm) : null,
+    compases: isFinite(m.compases) ? Number(m.compases) : null,
+    voces: (Array.isArray(m.voces) ? m.voces : []).slice(0, 32).map(function (v) { return String(v).slice(0, 60); })
+  };
+}
+
+// Devuelve { archivo, carpeta } de un archivo de la biblioteca; falla si el id no pertenece a la carpeta MIDIS.
+function archivoEnMidis_(id) {
   const carpeta = carpetaMidis_(false);
   if (!carpeta) throw new Error('La carpeta MIDIS no existe todavía.');
   const archivo = DriveApp.getFileById(String(id));
@@ -135,7 +151,79 @@ function obtenerMidi(id) {
   const padres = archivo.getParents();
   while (padres.hasNext()) { if (padres.next().getId() === carpeta.getId()) { dentro = true; break; } }
   if (!dentro) throw new Error('Ese archivo no está en la biblioteca.');
-  return { titulo: archivo.getName().replace(/\.midi?$/i, ''), base64: Utilities.base64Encode(archivo.getBlob().getBytes()) };
+  return { archivo: archivo, carpeta: carpeta };
+}
+
+/* ---------------------------------------------------------------- Versiones editadas */
+
+// Pieza de la que cuelga un archivo y su número de versión (0 = el original). Se lee de la descripción del archivo,
+// no del nombre, para que renombrar un archivo no rompa la cadena de versiones.
+function raizYVersion_(archivo) {
+  let meta = null;
+  try { meta = JSON.parse(archivo.getDescription() || 'null'); } catch (e) { meta = null; }
+  const titulo = archivo.getName().replace(/\.midi?$/i, '');
+  return { titulo: titulo, meta: meta, raiz: (meta && meta.raiz) || titulo, version: (meta && Number(meta.version)) || 0 };
+}
+
+// Siguiente número de versión libre para esa pieza (la mayor existente + 1).
+function siguienteVersion_(carpeta, raiz) {
+  const re = new RegExp('^' + raiz.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' V(\\d+)$');
+  let max = 0;
+  const it = carpeta.getFiles();
+  while (it.hasNext()) {
+    const f = it.next();
+    if (!/\.midi?$/i.test(f.getName())) continue;
+    const r = raizYVersion_(f);
+    if (r.raiz === raiz && r.version > max) max = r.version;
+    const m = re.exec(r.titulo);   // por si el archivo perdió su descripción
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return max + 1;
+}
+
+function nombreVersion_(raiz, n) {
+  const nombre = raiz + ' V' + n;
+  if (!TITULO_VALIDO.test(nombre)) throw new Error('El título es demasiado largo para añadirle la versión (máximo 80 caracteres).');
+  return nombre;
+}
+
+/** Nombre que tendría la próxima versión de una pieza de la biblioteca: { raiz, version, nombre }. */
+function proximaVersion(id) {
+  const o = archivoEnMidis_(id);
+  const r = raizYVersion_(o.archivo);
+  const n = siguienteVersion_(o.carpeta, r.raiz);
+  return { raiz: r.raiz, version: n, nombre: nombreVersion_(r.raiz, n) };
+}
+
+/**
+ * Guarda una versión editada (MIDI en base64) como «RAÍZ Vn» en la carpeta MIDIS, sin tocar el original.
+ * meta: lo que la app reconoció del archivo editado; resumen: { total, duraciones, alturas, sustituidas }.
+ */
+function guardarVersion(idOrigen, base64, meta, resumen) {
+  const bytes = bytesMidi_(base64);
+  const limpio = metaLimpia_(meta);
+  const r = resumen || {};
+  const lock = LockService.getUserLock();
+  lock.waitLock(20000);
+  try {
+    const o = archivoEnMidis_(idOrigen);
+    const rv = raizYVersion_(o.archivo);
+    let n = siguienteVersion_(o.carpeta, rv.raiz);
+    let nombre = nombreVersion_(rv.raiz, n);
+    while (o.carpeta.getFilesByName(nombre + '.mid').hasNext()) { n++; nombre = nombreVersion_(rv.raiz, n); }
+    const archivo = o.carpeta.createFile(Utilities.newBlob(bytes, 'audio/midi', nombre + '.mid'));
+    limpio.raiz = rv.raiz;
+    limpio.version = n;
+    limpio.origen = String(idOrigen);
+    limpio.cambios = {
+      total: Number(r.total) || 0, duraciones: Number(r.duraciones) || 0,
+      alturas: Number(r.alturas) || 0, sustituidas: Number(r.sustituidas) || 0
+    };
+    archivo.setDescription(JSON.stringify(limpio));
+    return itemMidi_(archivo);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /* ---------------------------------------------------------------- Estado por canción */

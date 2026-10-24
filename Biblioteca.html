@@ -44,7 +44,9 @@ function celdaMensaje(texto, accion) {
 
 function filaItem(it) {
   const tr = el('tr'), m = it.meta;
-  tr.appendChild(el('td', 'tabla-col-titulo', it.titulo));
+  const tit = el('td', 'tabla-col-titulo', it.titulo);
+  if (m && m.version > 0) tit.appendChild(el('div', 'tabla-sub', 'Versión ' + m.version + ' de ' + (m.raiz || it.titulo)));   // las versiones son filas propias
+  tr.appendChild(tit);
   tr.appendChild(el('td', '', m && m.compas ? m.compas : '–'));
   tr.appendChild(el('td', '', m && m.bpm ? `♩ = ${m.bpm}` : '–'));
   tr.appendChild(el('td', '', m && m.compases ? String(m.compases) : '–'));
@@ -60,6 +62,7 @@ function filaItem(it) {
   const etiqueta = () => { b.innerHTML = ''; const i = document.createElement('i'); i.setAttribute('data-lucide', 'mic-vocal'); b.append(i, ' Ensayo'); };
   etiqueta();
   b.addEventListener('click', async () => {
+    if (window.Edicion && !(await window.Edicion.confirmarDescarte())) return;   // hay cambios sin guardar en el Ensayo
     b.disabled = true; b.textContent = 'Abriendo…';
     try {
       if (!window.Ensayo) throw new Error('El módulo de ensayo no está disponible. Recarga la página.');

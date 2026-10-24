@@ -10,6 +10,8 @@ const state = {
   bpm: 84, coroVol: 0.7, sel: null, stage: 0, keySf: 0, songKey: '', saved: [], restored: false, zoom: 1
 };
 const ui = { pieces: [], beams: [], mrects: [], nowIdx: -1, nowSys: -1, lastW: 0 };
+// Enganches para el módulo de edición (Edicion.html): redibujado, clic en una nota y carga de otra pieza.
+const hooks = { alRenderizar: null, alClicNota: null, alCargar: null };
 
 /* ------------------------------------------------------------- MIDI parser */
 function parseMidi(buf) {
@@ -19,13 +21,14 @@ function parseMidi(buf) {
   const u32 = () => { const v = d.getUint32(p); p += 4; return v; };
   const str = (n) => { let s = ''; for (let i = 0; i < n; i++) s += String.fromCharCode(u8()); return s; };
   if (buf.byteLength < 14 || str(4) !== 'MThd') throw new Error('El archivo no parece ser un MIDI válido.');
-  const hl = u32(); u16(); const nt = u16(); const div = u16(); p = 8 + hl;
+  const hl = u32(); const fmt = u16(); const nt = u16(); const div = u16(); p = 8 + hl;
   if (div & 0x8000) throw new Error('Este MIDI usa tiempo SMPTE, que no está soportado.');
-  const out = { ppq: div, tracks: [], tempos: [], tsig: [], keys: [] };
+  const out = { format: fmt, ppq: div, tracks: [], tempos: [], tsig: [], keys: [] };
   for (let t = 0; t < nt && p + 8 <= buf.byteLength; t++) {
     const id = str(4); const len = u32(); const end = Math.min(p + len, buf.byteLength);
     if (id !== 'MTrk') { p = end; continue; }
-    let tick = 0, run = 0, name = ''; const notes = []; const open = {};
+    // events: todos los eventos de la pista tal cual (para poder reescribir el archivo sin perder nada al editar).
+    let tick = 0, run = 0, name = ''; const notes = []; const open = {}; const events = [];
     while (p < end) {
       let dt = 0, b;
       do { b = u8(); dt = dt * 128 + (b & 127); } while ((b & 128) && p < end);
@@ -40,20 +43,26 @@ function parseMidi(buf) {
         else if (type === 0x51 && l === 3) out.tempos.push({ tick, us: (d.getUint8(s) << 16) | (d.getUint8(s + 1) << 8) | d.getUint8(s + 2) });
         else if (type === 0x58 && l >= 2) out.tsig.push({ tick, num: d.getUint8(s), den: 1 << d.getUint8(s + 1) });
         else if (type === 0x59 && l >= 2) out.keys.push({ tick, sf: d.getInt8(s), mi: d.getUint8(s + 1) });
+        events.push({ tick, meta: type, data: new Uint8Array(buf.slice(s, s + l)) });
         p = s + l; continue;
       }
-      if (st === 0xF0 || st === 0xF7) { let l = 0; do { b = u8(); l = l * 128 + (b & 127); } while (b & 128); p += l; continue; }
+      if (st === 0xF0 || st === 0xF7) {
+        let l = 0; do { b = u8(); l = l * 128 + (b & 127); } while (b & 128);
+        events.push({ tick, sysex: st, data: new Uint8Array(buf.slice(p, p + l)) });
+        p += l; continue;
+      }
       const type = st & 0xF0, ch = st & 15;
-      if (type === 0xC0 || type === 0xD0) { p++; continue; }
+      if (type === 0xC0 || type === 0xD0) { events.push({ tick, st, a: d.getUint8(p) }); p++; continue; }
       const a = u8(), v = u8();
-      if (type === 0x90 && v > 0) { (open[ch * 128 + a] = open[ch * 128 + a] || []).push({ start: tick, vel: v }); }
+      const evIdx = events.push({ tick, st, a, b: v }) - 1;
+      if (type === 0x90 && v > 0) { (open[ch * 128 + a] = open[ch * 128 + a] || []).push({ start: tick, vel: v, on: evIdx }); }
       else if (type === 0x80 || (type === 0x90 && v === 0)) {
         const arr = open[ch * 128 + a];
-        if (arr && arr.length) { const o = arr.shift(); notes.push({ midi: a, ch, start: o.start, end: tick, vel: o.vel }); }
+        if (arr && arr.length) { const o = arr.shift(); notes.push({ midi: a, ch, start: o.start, end: tick, vel: o.vel, on: o.on, off: evIdx }); }
       }
     }
-    for (const k in open) for (const o of open[k]) notes.push({ midi: k % 128, ch: Math.floor(k / 128), start: o.start, end: tick, vel: o.vel });
-    out.tracks.push({ name, notes });
+    for (const k in open) for (const o of open[k]) notes.push({ midi: k % 128, ch: Math.floor(k / 128), start: o.start, end: tick, vel: o.vel, on: o.on, off: -1 });
+    out.tracks.push({ name, notes, events });
     p = end;
   }
   return out;
@@ -66,7 +75,7 @@ function monoLine(notes) {
   const out = [];
   for (const n of s) {
     if (out.length && Math.abs(out[out.length - 1].start - n.start) < EPS) continue;
-    out.push({ midi: n.midi, start: n.start, end: n.end });
+    out.push({ midi: n.midi, start: n.start, end: n.end, key: n.key });
   }
   for (let i = 0; i < out.length - 1; i++) if (out[i].end > out[i + 1].start) out[i].end = out[i + 1].start;
   return out.filter((n) => n.end - n.start > EPS);
@@ -98,20 +107,21 @@ function buildSong(parsed, title) {
     t.notes.forEach((n) => { if (n.ch === 9) return; (byCh[n.ch] = byCh[n.ch] || []).push(n); });
     const chs = Object.keys(byCh);
     chs.forEach((ch) => {
+      // key identifica la nota en el archivo original (pista:evento de nota-on); base es el estado sin editar.
       const notes = byCh[ch].map((n) => {
         const s = q4(n.start / parsed.ppq); let e = q4(n.end / parsed.ppq); if (e <= s) e = s + 0.25;
-        return { midi: n.midi, start: s, end: e };
+        return { midi: n.midi, start: s, end: e, key: ti + ':' + n.on };
       });
       let name = t.name || `Voz ${voices.length + 1}`;
       if (chs.length > 1) name += ` (canal ${+ch + 1})`;
-      voices.push({ name, notes, line: monoLine(notes), med: median(notes.map((n) => n.midi)) });
+      voices.push({ name, notes, line: monoLine(notes), med: median(notes.map((n) => n.midi)), base: notes.map((n) => Object.assign({}, n)) });
     });
   });
   if (!voices.length) throw new Error('No encontré notas en este MIDI.');
   const ts = parsed.tsig[0] || { num: 4, den: 4 };
   const bpm = parsed.tempos[0] ? Math.round(60e6 / parsed.tempos[0].us) : 90;
   const sf = parsed.keys[0] ? parsed.keys[0].sf : guessKey(voices);
-  return finishSong({ title, voices, ts, bpm, sf, hasKey: !!parsed.keys[0] });
+  return finishSong({ title, voices, ts, bpm, sf, hasKey: !!parsed.keys[0], raw: parsed });
 }
 function finishSong(s) {
   s.mb = s.ts.num * 4 / s.ts.den;
@@ -342,6 +352,7 @@ function renderScore() {
   });
   host.querySelector('svg').addEventListener('click', onScoreClick);
   applySelection();
+  if (hooks.alRenderizar) hooks.alRenderizar();
 }
 
 // Qué nota o compás hay bajo el puntero. Se mira toda la pila de elementos porque las líneas del pentagrama
@@ -357,6 +368,7 @@ function ubicar(e) {
 function onScoreClick(e) {
   if (!state.song) return;
   const { pn, mr } = ubicar(e);
+  if (hooks.alClicNota && hooks.alClicNota(pn)) return;   // en modo edición el clic elige la nota a editar
   if (pn) {
     const n = curLine()[+pn.getAttribute('data-note')];
     if (n) pick({ a: n.start, b: n.end });
@@ -667,6 +679,7 @@ function setBpmUi() {
 }
 function loadSong(song, key) {
   stopPlay(); flushSave();
+  if (hooks.alCargar) hooks.alCargar(song, key);
   state.song = song; state.songKey = key; state.sel = null; state.stage = 0;
   state.voiceIdx = Math.max(0, song.voices.findIndex((v) => clefFor(v) === 't8' && /tenor/i.test(v.name)));
   if (state.voiceIdx < 0 || !/tenor/i.test(song.voices[state.voiceIdx].name)) {
@@ -763,6 +776,7 @@ function boot() {
   loadSong(sampleSong(), 'ejemplo');
   window.Ensayo = {
     detener: stopPlay,
+    limpiarSeleccion: () => limpiarSeleccion(),
     // Al volver a la vista el contenedor pudo cambiar de ancho mientras estaba oculto.
     refrescar: () => { const w = $('#score').clientWidth; if (state.song && w > 0 && Math.abs(w - ui.lastW) > 24) renderScore(); },
     // Lee un MIDI y devuelve lo que se reconoce de él, sin cargarlo en el ensayo (lo usa la Biblioteca).
@@ -772,7 +786,23 @@ function boot() {
     },
     // Carga un MIDI de la Biblioteca; la clave estable conserva sus tramos guardados.
     cargarMidi: (buf, titulo, clave) => loadSong(buildSong(parseMidi(buf), titulo), clave),
-    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, '')
+    tituloTopbar: () => 'Ensayo · ' + curVoice().name.replace(/\s*\(canal.*\)/, ''),
+    // Lo que necesita el modo edición (Edicion.html).
+    puente: {
+      hooks,
+      estado: () => state,
+      linea: () => curLine(),
+      voz: () => curVoice(),
+      piezas: () => ui.pieces,
+      monoLine,
+      q4,
+      render: () => renderScore(),
+      detener: stopPlay,
+      reproduciendo: () => S.playing,
+      nombreVoz: () => curVoice().name.replace(/\s*\(canal.*\)/, ''),
+      // Suena la nota brevemente (para oír el cambio de altura al editar).
+      previsualizar: (midi) => { ensureAudio(); playNote(midi, ac.currentTime + 0.02, 0.45, STY.lead, 1); }
+    }
   };
   if (window.refrescarTituloTopbar) window.refrescarTituloTopbar();
   ejecutar('getPrefs').then((p) => {

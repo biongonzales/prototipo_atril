@@ -507,6 +507,7 @@
   .tabla-datos tbody tr:last-child td { border-bottom: none; }
   .tabla-datos tbody tr:hover { background: var(--slate-50); }
   .tabla-col-titulo { font-weight: 600; color: var(--slate-900); }
+  .tabla-sub { margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--slate-500); }
   .tabla-col-acciones { text-align: right !important; white-space: nowrap; }
   .tabla-mensaje { text-align: center; padding: 40px 16px !important; color: var(--slate-500); white-space: normal; }
   .tabla-mensaje .btn { margin-top: 12px; }
@@ -572,6 +573,47 @@
     .modal-acciones { flex-direction: column-reverse; }
     .modal-acciones .btn { width: 100%; }
     .tabla-buscador { max-width: none; flex-basis: 100%; }
+  }
+
+  /* ---------- Edición de la voz ---------- */
+  :root { --edit: #7c3aed; --edit-fondo: rgba(124, 58, 237, .14); }
+  :root[data-theme="dark"] { --edit: #a78bfa; --edit-fondo: rgba(167, 139, 250, .18); }
+
+  .partitura-acciones { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .edicion { margin-bottom: 14px; padding: 14px; border: 1px solid var(--slate-200); border-left: 4px solid var(--edit); border-radius: 10px; background: var(--slate-50); display: grid; gap: 12px; }
+  .edicion-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .edicion-info strong { font-size: 18px; line-height: 24px; }
+  .ed-sub { font-size: 13px; color: var(--slate-500); }
+  .edicion-fila { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; }
+  .edicion-grupo { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .ed-etiqueta { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--slate-500); }
+  .ed-contador { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--edit); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+  .ed-contador:empty { display: none; }
+  .ed-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ed-acciones { margin-left: auto; }
+
+  .ed-durs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+  .ed-dur {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+    min-height: 46px; padding: 4px 6px;
+    border: 1px solid var(--slate-300); border-radius: 8px; background: var(--superficie); color: var(--slate-800);
+    font: 600 13px/16px 'Outfit', 'Segoe UI', Roboto, Arial, sans-serif; cursor: pointer;
+  }
+  .ed-dur:hover:not(:disabled) { background: var(--slate-100); }
+  .ed-dur-v { font: 400 11px/14px var(--font-mono); color: var(--slate-500); }
+  .ed-dur.activo { background: var(--edit); border-color: var(--edit); color: #fff; }
+  .ed-dur.activo .ed-dur-v { color: rgba(255, 255, 255, .85); }
+  .ed-dur.choca:not(.activo) { border-color: #f59e0b; box-shadow: inset 0 0 0 1px #f59e0b; }
+  .ed-dur:disabled { opacity: .4; cursor: not-allowed; }
+
+  #score .pn.mod { fill: var(--edit); stroke: var(--edit); }
+  #score .pn.editsel .hit { fill: var(--edit-fondo); stroke: var(--edit); stroke-width: 1.5; }
+  .modo-edicion #score .mrect { cursor: default; }
+  @media (max-width: 640px) {
+    .ed-acciones { margin-left: 0; }
+    .ed-acciones .btn span { display: none; }
+    .ed-durs { grid-template-columns: repeat(4, 1fr); }
+    .ed-dur { min-height: 52px; font-size: 12px; }
   }
 
   /* ---------- Guía ---------- */

@@ -140,11 +140,54 @@
           <div class="dash-tarjeta">
             <div class="dash-tarjeta-head">
               <h2 class="dash-titulo">Partitura</h2>
-              <div class="zoom-ctl" role="group" aria-label="Tamaño de la partitura">
-                <button id="zoomMenos" type="button" aria-label="Reducir partitura" title="Reducir"><i data-lucide="minus"></i></button>
-                <button id="zoomValor" type="button" class="zoom-valor mono" title="Volver al 100%">100%</button>
-                <button id="zoomMas" type="button" aria-label="Ampliar partitura" title="Ampliar"><i data-lucide="plus"></i></button>
+              <div class="partitura-acciones">
+                <button id="btnEditar" class="btn btn-chico" type="button" aria-pressed="false" aria-controls="panel-edicion"><i data-lucide="pencil"></i><span>Editar</span></button>
+                <div class="zoom-ctl" role="group" aria-label="Tamaño de la partitura">
+                  <button id="zoomMenos" type="button" aria-label="Reducir partitura" title="Reducir"><i data-lucide="minus"></i></button>
+                  <button id="zoomValor" type="button" class="zoom-valor mono" title="Volver al 100%">100%</button>
+                  <button id="zoomMas" type="button" aria-label="Ampliar partitura" title="Ampliar"><i data-lucide="plus"></i></button>
+                </div>
               </div>
+            </div>
+
+            <!-- Edición de la voz: duración y altura de las notas; se guarda como una versión nueva. -->
+            <div id="panel-edicion" class="edicion oculto" aria-label="Edición de la voz">
+              <div class="edicion-info">
+                <strong id="ed-nota">Toca una nota de la partitura para editarla</strong>
+                <span id="ed-sub" class="ed-sub"></span>
+              </div>
+              <div class="edicion-grupo">
+                <span class="ed-etiqueta">Duración</span>
+                <div class="ed-durs" id="ed-durs" role="group" aria-label="Duración de la nota"></div>
+              </div>
+              <div class="edicion-fila">
+                <div class="edicion-grupo">
+                  <span class="ed-etiqueta">Altura</span>
+                  <div class="ed-btns">
+                    <button type="button" class="btn btn-chico" id="ed-oct-bajar" title="Bajar una octava (Mayús+↓)">−8ª</button>
+                    <button type="button" class="btn btn-chico" id="ed-semi-bajar" title="Bajar un semitono (↓)">−½</button>
+                    <button type="button" class="btn btn-chico" id="ed-semi-subir" title="Subir un semitono (↑)">+½</button>
+                    <button type="button" class="btn btn-chico" id="ed-oct-subir" title="Subir una octava (Mayús+↑)">+8ª</button>
+                  </div>
+                </div>
+                <div class="edicion-grupo">
+                  <span class="ed-etiqueta">Nota</span>
+                  <div class="ed-btns">
+                    <button type="button" class="btn btn-chico" id="ed-prev" aria-label="Nota anterior" title="Nota anterior (←)"><i data-lucide="chevron-left"></i></button>
+                    <button type="button" class="btn btn-chico" id="ed-next" aria-label="Nota siguiente" title="Nota siguiente (→)"><i data-lucide="chevron-right"></i></button>
+                  </div>
+                </div>
+                <div class="edicion-grupo ed-acciones">
+                  <span class="ed-etiqueta">Cambios <span id="ed-contador" class="ed-contador"></span></span>
+                  <div class="ed-btns">
+                    <button type="button" class="btn btn-chico" id="ed-deshacer" aria-label="Deshacer" title="Deshacer (Ctrl+Z)"><i data-lucide="undo-2"></i></button>
+                    <button type="button" class="btn btn-chico" id="ed-rehacer" aria-label="Rehacer" title="Rehacer (Ctrl+Y)"><i data-lucide="redo-2"></i></button>
+                    <button type="button" class="btn btn-chico" id="ed-descartar" title="Descartar todos los cambios" aria-label="Descartar cambios"><i data-lucide="trash-2"></i><span>Descartar</span></button>
+                    <button type="button" class="btn btn-chico btn-primario" id="ed-guardar" title="Guardar los cambios como una versión nueva" aria-label="Guardar versión"><i data-lucide="save"></i><span>Guardar versión</span></button>
+                  </div>
+                </div>
+              </div>
+              <p id="ed-aviso" class="nota-banner" role="status"></p>
             </div>
             <div class="paper">
               <div id="score"></div>
@@ -207,6 +250,19 @@
               <li><strong>Zoom de la partitura:</strong> los botones − y + de la tarjeta Partitura la hacen más pequeña (caben más compases por línea) o más grande (útil en el móvil). El porcentaje vuelve al 100%.</li>
               <li><strong>Ocultar controles:</strong> el botón junto al título de la pieza esconde Voz, Armadura, Cuenta, Tempo y Coro para dar más espacio a la partitura.</li>
               <li><strong>Atajo:</strong> la barra espaciadora reproduce y detiene.</li>
+            </ul>
+          </div>
+
+          <div class="seccion">
+            <span class="seccion-etiqueta"><i data-lucide="pencil"></i> Editar una pieza</span>
+            <ul class="pasos">
+              <li><strong>Abrir la edición:</strong> abre una pieza desde la Biblioteca y pulsa «Editar» en la tarjeta Partitura. Se edita la voz que tengas elegida en «Voz a practicar».</li>
+              <li><strong>Elegir una nota:</strong> tócala en la partitura (o usa las flechas ◀ ▶). Las notas modificadas se pintan en violeta.</li>
+              <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Nada se corre: si acortas, lo que sobra queda como silencio, y los compases siguen completos. Si alargas sobre la nota siguiente, la app te avisa y tú decides si sustituirla.</li>
+              <li><strong>Altura:</strong> ±½ tono o ±8ª (también con ↑ ↓). Se oye la nota al cambiarla y se avisa si queda fuera del rango habitual de la voz.</li>
+              <li><strong>Deshacer / Rehacer:</strong> Ctrl+Z y Ctrl+Y. «Descartar» vuelve a la pieza tal como se abrió.</li>
+              <li><strong>Guardar versión:</strong> crea una pieza nueva en la Biblioteca llamada «TÍTULO V1», luego «V2», etc. El archivo original nunca se modifica.</li>
+              <li>Si la voz tiene notas simultáneas (divisi), solo se editan las notas visibles; las demás no se tocan.</li>
             </ul>
           </div>
 
@@ -275,5 +331,6 @@
   <?!= include('App'); ?>
   <?!= include('Ensayo'); ?>
   <?!= include('Biblioteca'); ?>
+  <?!= include('Edicion'); ?>
 </body>
 </html>
