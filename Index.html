@@ -113,33 +113,25 @@
                 <label class="campo">Armadura
                   <select id="keysel" aria-label="Armadura de clave"></select>
                 </label>
-                <label class="btn btn-primario" for="file"><i data-lucide="file-up"></i> Cargar MIDI
-                  <input id="file" type="file" accept=".mid,.midi,audio/midi,audio/x-midi">
+                <label class="campo">Cuenta
+                  <select id="count" aria-label="Cuenta previa">
+                    <option value="none">Sin cuenta</option>
+                    <option value="start" selected>Al iniciar</option>
+                    <option value="each">En cada vuelta</option>
+                  </select>
+                </label>
+                <label class="campo">Tempo
+                  <span class="campo-slider">
+                    <input id="bpm" type="range" min="40" max="200" value="84" aria-label="Tempo en pulsos por minuto">
+                    <span class="mono" id="bpmOut">84</span>
+                  </span>
+                </label>
+                <label class="campo">Coro
+                  <span class="campo-slider">
+                    <input id="coroVol" type="range" min="0" max="100" value="70" aria-label="Volumen del coro">
+                  </span>
                 </label>
               </div>
-            </div>
-          </div>
-
-          <div class="dash-kpis">
-            <div class="dash-kpi">
-              <div class="dash-kpi-etiqueta">Compás</div>
-              <div class="dash-kpi-valor" id="kpiCompas">–</div>
-              <div class="dash-kpi-nota">Tiempos por compás</div>
-            </div>
-            <div class="dash-kpi">
-              <div class="dash-kpi-etiqueta">Tempo</div>
-              <div class="dash-kpi-valor" id="kpiTempo">–</div>
-              <div class="dash-kpi-nota" id="kpiTempoNota">Pulsos por minuto</div>
-            </div>
-            <div class="dash-kpi">
-              <div class="dash-kpi-etiqueta">Compases</div>
-              <div class="dash-kpi-valor" id="kpiCompases">–</div>
-              <div class="dash-kpi-nota">Largo de la pieza</div>
-            </div>
-            <div class="dash-kpi">
-              <div class="dash-kpi-etiqueta">Voces</div>
-              <div class="dash-kpi-valor" id="kpiVoces">–</div>
-              <div class="dash-kpi-nota">Pistas en el archivo</div>
             </div>
           </div>
 
@@ -230,30 +222,11 @@
             </button>
             <button id="btnLoop" class="toggle btn" type="button" aria-pressed="true">Repetir tramo</button>
             <button id="btnMetro" class="toggle btn" type="button" aria-pressed="false">Metrónomo</button>
-            <button id="btnMore" class="more btn" type="button" aria-expanded="false" aria-controls="extra">Ajustes</button>
-          </div>
-          <div class="bar-row">
             <div class="seg" role="radiogroup" aria-label="Qué se escucha" id="modes">
               <button type="button" role="radio" data-mode="tenor" aria-checked="false">Solo tenor</button>
               <button type="button" role="radio" data-mode="tenorcoro" aria-checked="true">Tenor + coro</button>
               <button type="button" role="radio" data-mode="sintenor" aria-checked="false">Coro sin tenor</button>
               <button type="button" role="radio" data-mode="coro" aria-checked="false">Orquesta</button>
-            </div>
-            <div class="extra" id="extra">
-              <label class="campo en-linea">Cuenta
-                <select id="count" aria-label="Cuenta previa">
-                  <option value="none">Sin cuenta</option>
-                  <option value="start" selected>Al iniciar</option>
-                  <option value="each">En cada vuelta</option>
-                </select>
-              </label>
-              <label class="slider grow">Tempo
-                <input id="bpm" type="range" min="40" max="200" value="84" aria-label="Tempo en pulsos por minuto">
-                <span class="mono" id="bpmOut">84</span>
-              </label>
-              <label class="slider">Coro
-                <input id="coroVol" type="range" min="0" max="100" value="70" aria-label="Volumen del coro">
-              </label>
             </div>
           </div>
         </div>

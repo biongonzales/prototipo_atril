@@ -645,16 +645,11 @@ function updateLabels() {
   const song = state.song;
   $('#title').textContent = 'Ensayo de ' + vn;
   $('#meta').textContent = 'Pieza: ' + song.title;
-  $('#kpiCompas').textContent = `${song.ts.num}/${song.ts.den}`;
-  $('#kpiCompases').textContent = song.nMeas;
-  $('#kpiVoces').textContent = song.voices.length;
 }
 function setBpmUi() {
   $('#bpm').value = state.bpm;
   const pct = Math.round(state.bpm / state.song.bpm * 100);
   $('#bpmOut').textContent = `${state.bpm} · ${pct}%`;
-  $('#kpiTempo').textContent = `♩ = ${state.bpm}`;
-  $('#kpiTempoNota').textContent = `${pct}% del original (${state.song.bpm})`;
 }
 function loadSong(song, key) {
   stopPlay(); flushSave();
@@ -673,26 +668,13 @@ function loadSong(song, key) {
   restore();   // lee del servidor tramos, tempo y voz de esta canción y refresca la interfaz
 }
 function showError(e) { $('#msg').textContent = e.message || String(e); }
-async function handleFile(f) {
-  if (!f) return;
-  try {
-    const buf = await f.arrayBuffer();
-    const song = buildSong(parseMidi(buf), f.name.replace(/\.(mid|midi)$/i, ''));
-    loadSong(song, f.name + '|' + song.voices.reduce((a, v) => a + v.notes.length, 0));
-  } catch (e) { showError(e); }
-}
-
-$('#file').addEventListener('change', (e) => { handleFile(e.target.files[0]); e.target.value = ''; });
-// Soltar un archivo solo carga el ensayo si esa vista está abierta; en la Biblioteca lo gestiona su propio código.
-const enEnsayo = () => !$('#panel-ensayo').classList.contains('oculto');
-['dragover', 'dragenter'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); if (enEnsayo()) document.body.classList.add('drop-on'); }));
-['dragleave', 'drop'].forEach((n) => addEventListener(n, (e) => { e.preventDefault(); document.body.classList.remove('drop-on'); if (n === 'drop' && enEnsayo() && e.dataTransfer && e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); }));
+// Los MIDIs entran solo por la Biblioteca. Se evita que soltar un archivo fuera de ella haga que el navegador lo abra.
+['dragover', 'drop'].forEach((n) => addEventListener(n, (e) => e.preventDefault()));
 $('#voice').addEventListener('change', (e) => { stopPlay(); state.voiceIdx = +e.target.value; state.sel = null; state.stage = 0; updateLabels(); renderScore(); persist(); });
 $('#keysel').addEventListener('change', (e) => { state.keySf = +e.target.value; renderScore(); });
 $('#play').addEventListener('click', () => (S.playing ? stopPlay() : startPlay()));
 $('#btnLoop').addEventListener('click', (e) => { state.loop = !state.loop; e.currentTarget.setAttribute('aria-pressed', state.loop); });
 $('#btnMetro').addEventListener('click', (e) => { state.metro = !state.metro; e.currentTarget.setAttribute('aria-pressed', state.metro); });
-$('#btnMore').addEventListener('click', (e) => { const o = $('.bar').classList.toggle('open'); e.currentTarget.setAttribute('aria-expanded', o); });
 $('#count').addEventListener('change', (e) => { state.count = e.target.value; });
 $('#modes').addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;

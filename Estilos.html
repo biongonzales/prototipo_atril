@@ -321,21 +321,6 @@
   }
   .dash-subtitulo { font-size: 12px; color: var(--slate-500); }
 
-  .dash-kpis {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr));
-    gap: 16px;
-  }
-  .dash-kpi {
-    background: var(--superficie);
-    border: 1px solid var(--slate-200);
-    border-radius: 12px;
-    padding: 16px 18px;
-  }
-  .dash-kpi-etiqueta { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--slate-500); }
-  .dash-kpi-valor { margin-top: 6px; font-size: 26px; font-weight: 600; line-height: 32px; color: var(--slate-900); font-variant-numeric: tabular-nums; }
-  .dash-kpi-nota { margin-top: 4px; font-size: 12px; color: var(--slate-500); }
-
   .nota-banner {
     display: flex;
     align-items: flex-start;
@@ -399,8 +384,6 @@
   #score .pn.now .hit { fill: var(--accent-nota); fill-opacity: .16; stroke: none; }
   #score .mnum { font: 500 11px var(--font-mono); fill: var(--muted); stroke: none; }
 
-  .drop-on .paper { outline: 2px dashed var(--teal-600); outline-offset: 3px; }
-
   /* ---------- Tramo de práctica ---------- */
   .panel-row { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; }
   .range { display: flex; flex-direction: column; gap: 2px; min-width: 150px; }
@@ -443,13 +426,10 @@
   .seg button:hover { background: var(--slate-100); }
   .seg button + button { border-left: 1px solid var(--slate-300); }
   .seg button[aria-checked="true"] { background: var(--teal-700); color: #fff; }
-  .slider { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 500; color: var(--slate-500); text-transform: uppercase; letter-spacing: .06em; }
-  .slider input { width: 130px; accent-color: var(--teal-700); }
-  .slider .mono { text-transform: none; letter-spacing: 0; color: var(--slate-900); min-width: 6em; }
-  .grow { flex: 1 1 220px; }
-  .grow input { flex: 1; width: auto; min-width: 90px; }
-  .extra { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; flex: 1 1 320px; }
-  .more { display: none; }
+  /* Tempo y Coro viven en la cabecera del ensayo, con la misma etiqueta superior que los demás campos. */
+  .campo-slider { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+  .campo-slider input[type="range"] { width: 130px; accent-color: var(--teal-700); }
+  .campo-slider .mono { font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--slate-900); min-width: 6.5em; }
 
   /* ---------- Biblioteca: tabla de datos ---------- */
   .panel-biblioteca { display: flex; flex-direction: column; gap: 16px; }
@@ -628,16 +608,12 @@
     h1 { font-size: 22px; line-height: 28px; }
     .topbar-titulo { font-size: 16px; }
     .dash-tarjeta { padding: 14px; }
-    .dash-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .dash-kpi { padding: 12px 14px; }
-    .dash-kpi-valor { font-size: 22px; line-height: 28px; }
     .ensayo-herramientas { width: 100%; }
-    .ensayo-herramientas .campo { flex: 1 1 140px; }
-    .ensayo-herramientas .btn { flex: 1 1 100%; }
+    .ensayo-herramientas .campo { flex: 1 1 140px; min-width: 0; }
+    .ensayo-herramientas select { width: 100%; }
+    .campo-slider input[type="range"] { flex: 1; width: auto; min-width: 60px; }
+    .campo-slider .mono { min-width: 0; white-space: nowrap; }
     .play { flex: 1 1 100%; }
-    .more { display: inline-flex; }
-    .extra { display: none; }
-    .bar.open .extra { display: flex; }
     .seg { width: 100%; }
     .seg button { flex: 1 1 50%; }
     .seg button:nth-child(3) { border-left: 0; }
