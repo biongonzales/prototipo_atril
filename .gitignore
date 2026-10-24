@@ -1,0 +1,24 @@
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores
+.vscode/
+.idea/
+
+# Dependencias y builds
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+
+# Secretos y logs
+.env
+.env.*
+*.log
+
+# Google Apps Script (clasp)
+.clasprc.json
