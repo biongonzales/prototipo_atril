@@ -39,7 +39,8 @@ const clonar = (o) => JSON.parse(JSON.stringify(o));
 
 /* ------------------------------------------------------------------ estado */
 // ov: cambios sobre las notas del archivo, por clave «pista:evento» (tiempos en pulsos de negra):
-//   { midi?, start?, end?, letra?, del? }                  → nota existente modificada, o borrada (queda un silencio)
+//   { midi?, start?, end?, letra?, extras?, del? }         → nota existente modificada, o borrada (queda un silencio)
+//     letra = estrofa 1; extras = estrofas 2, 3… (cada estrofa es un evento de letra en el mismo instante de la nota)
 //   { nuevo: true, t, ch, midi, start, end, vel, letra? }   → nota escrita por el usuario (clave «+n»)
 // extra: compases de silencio añadidos al final de la pieza.
 // warps: cambios de tiempo que afectan a TODAS las voces a la vez (alargar/acortar un tramo, insertar tiempo), en orden:
@@ -47,7 +48,7 @@ const clonar = (o) => JSON.parse(JSON.stringify(o));
 //   { s, e: s, d }  → se inserta tiempo d en s (todo lo que empieza en s o después se corre d)
 // Las notas sin cambio propio se calculan a partir de las originales pasando por los warps; ov ya va en tiempo final.
 const ed = {
-  activo: false, key: null, rs: null, ov: {}, extra: 0, warps: [], hist: [{ ov: {}, extra: 0, warps: [] }], pos: 0,
+  activo: false, key: null, rs: null, ov: {}, extra: 0, warps: [], estrofas: 1, hist: [{ ov: {}, extra: 0, warps: [] }], pos: 0,
   libId: null, base: new Map(), nMeasBase: 0, nuevoId: 0, guardando: false
 };
 // Tiempo (en pulsos de negra) tras aplicar los warps `lista`. esFin: el instante es el final de una nota (no el inicio).
@@ -71,7 +72,7 @@ function resumen() {
     if (o.nuevo) r.agregadas++;
     else if (o.del) r.sustituidas++;
     else { if (o.midi !== undefined) r.alturas++; if (o.start !== undefined || o.end !== undefined) r.duraciones++; }
-    if (o.letra !== undefined && !o.del) r.letras++;
+    if ((o.letra !== undefined || o.extras !== undefined) && !o.del) r.letras++;
   });
   return r;
 }
@@ -106,7 +107,7 @@ function escribirMidi(raw, ov, extra, totalBeats, warps) {
       }
       if (!o) return;
       if (o.del) {
-        borrar.add(n.on); if (n.off >= 0) borrar.add(n.off); if (n.letraEv >= 0) borrar.add(n.letraEv);
+        borrar.add(n.on); if (n.off >= 0) borrar.add(n.off); if (n.letraEv >= 0) borrar.add(n.letraEv); (n.extrasEv || []).forEach((i) => borrar.add(i));
         return;
       }
       if (o.midi !== undefined) { evs[n.on].a = o.midi; if (n.off >= 0) evs[n.off].a = o.midi; }
@@ -116,11 +117,13 @@ function escribirMidi(raw, ov, extra, totalBeats, warps) {
         if (n.off >= 0) evs[n.off].tick = fin;
         else nuevo({ tick: fin, st: 0x80 | n.ch, a: evs[n.on].a, b: 0 });   // la nota no tenía note-off
       }
-      if (o.letra !== undefined) {
-        if (n.letraEv >= 0) borrar.add(n.letraEv);
-        if (o.letra) nuevo({ tick: evs[n.on].tick, meta: 0x05, data: utf8(o.letra) });
-      } else if (o.start !== undefined && n.letraEv >= 0) {
-        evs[n.letraEv].tick = evs[n.on].tick;   // la letra acompaña a su nota si esta se recorta
+      const evLetras = [n.letraEv].concat(n.extrasEv || []).filter((i) => i >= 0);
+      if (o.letra !== undefined || o.extras !== undefined) {
+        // se reescriben todas las estrofas de la nota, en orden (las vacías del medio llevan un espacio para no perder su lugar)
+        evLetras.forEach((i) => borrar.add(i));
+        escribirEstrofas(nuevo, evs[n.on].tick, o.letra !== undefined ? o.letra : n.letra, o.extras !== undefined ? o.extras : n.extras);
+      } else if (o.start !== undefined) {
+        evLetras.forEach((i) => { evs[i].tick = evs[n.on].tick; });   // la letra acompaña a su nota si esta se mueve o se recorta
       }
     });
     // notas escritas por el usuario
@@ -130,7 +133,7 @@ function escribirMidi(raw, ov, extra, totalBeats, warps) {
       const ini = Math.round(o.start * ppq), fin = Math.max(Math.round(o.end * ppq), ini + 1);
       nuevo({ tick: ini, st: 0x90 | o.ch, a: o.midi, b: o.vel || 80 });
       nuevo({ tick: fin, st: 0x80 | o.ch, a: o.midi, b: 0x40 });
-      if (o.letra) nuevo({ tick: ini, meta: 0x05, data: utf8(o.letra) });
+      escribirEstrofas(nuevo, ini, o.letra, o.extras);
     });
     let fin = 0;
     const lista = evs.filter((e) => {
@@ -168,6 +171,12 @@ function escribirMidi(raw, ov, extra, totalBeats, warps) {
   });
   return new Uint8Array(out);
 }
+// Escribe la letra de una nota: estrofa 1 y después las demás, cada una como evento de letra en el mismo instante.
+function escribirEstrofas(nuevo, tick, letra, extras) {
+  const v = [letra || ''].concat(extras || []);
+  while (v.length && !v[v.length - 1]) v.pop();
+  v.forEach((t) => nuevo({ tick, meta: 0x05, data: utf8(t || ' ') }));
+}
 function aBase64(bytes) {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
@@ -190,7 +199,8 @@ function conCambios(b) {
     midi: w.midi !== undefined ? w.midi : b.midi,
     start: w.start !== undefined ? w.start : tiempo(b.start, false),
     end: w.end !== undefined ? w.end : tiempo(b.end, true),
-    letra: w.letra !== undefined ? w.letra : b.letra
+    letra: w.letra !== undefined ? w.letra : b.letra,
+    extras: w.extras !== undefined ? w.extras : (b.extras || [])
   });
 }
 // Recalcula las notas y la línea de cada voz a partir de las originales + cambios. El reproductor las lee en vivo.
@@ -203,7 +213,7 @@ function reconstruir() {
     v.base.forEach((b) => { const n = conCambios(b); if (n && n.end - n.start > EPS) notas.push(n); });
     Object.keys(ed.ov).forEach((k) => {
       const o = ed.ov[k];
-      if (o.nuevo && o.t === v.t && o.ch === v.ch && o.end - o.start > EPS) notas.push({ midi: o.midi, start: o.start, end: o.end, key: k, letra: o.letra || '', vel: o.vel });
+      if (o.nuevo && o.t === v.t && o.ch === v.ch && o.end - o.start > EPS) notas.push({ midi: o.midi, start: o.start, end: o.end, key: k, letra: o.letra || '', extras: o.extras || [], vel: o.vel });
     });
     notas.sort((a, b) => a.start - b.start || a.midi - b.midi);
     v.notes = notas;
@@ -218,11 +228,12 @@ function reconstruir() {
 function normalizar(k, o) {
   const b = ed.base.get(k);
   if (!b) return;   // las notas nuevas no tienen original con el que comparar
-  if (o.del) { delete o.midi; delete o.start; delete o.end; delete o.letra; return; }
+  if (o.del) { delete o.midi; delete o.start; delete o.end; delete o.letra; delete o.extras; return; }
   if (o.midi !== undefined && o.midi === b.midi) delete o.midi;
   if (o.start !== undefined && Math.abs(o.start - tiempo(b.start, false)) < EPS) delete o.start;
   if (o.end !== undefined && Math.abs(o.end - tiempo(b.end, true)) < EPS) delete o.end;
   if (o.letra !== undefined && (o.letra || '') === (b.letra || '')) delete o.letra;
+  if (o.extras !== undefined && JSON.stringify(o.extras) === JSON.stringify(b.extras || [])) delete o.extras;
 }
 function guardarHist() {
   ed.hist = ed.hist.slice(0, ed.pos + 1);
@@ -479,13 +490,37 @@ function quitarCompas() {
   ed.extra--; guardarHist(); refrescar();
 }
 
-function cambiarLetra(key, texto) {
+// Letra de la estrofa v (0 = la primera) de una nota.
+function cambiarLetra(key, texto, v) {
   const n = linea()[idxDe(key)];
   if (!n) return false;
+  v = v || 0;
   const t = String(texto).replace(/[\r\n]+/g, ' ').slice(0, 60);
-  if ((n.letra || '') === t) return false;
-  aplicar({ [n.key]: { letra: t } });
+  const est = [n.letra || ''].concat(n.extras || []);
+  while (est.length <= v) est.push('');
+  if (est[v] === t) return false;
+  est[v] = t;
+  while (est.length > 1 && !est[est.length - 1]) est.pop();
+  aplicar({ [n.key]: { letra: est[0], extras: est.slice(1) } });
   return true;
+}
+// Cuántas estrofas se muestran: las que ya tienen alguna nota de la voz y las que el usuario añadió.
+const nEstrofas = () => Math.max(ed.estrofas, 1 + Math.max(0, ...linea().map((n) => (n.extras || []).length)));
+function nuevaEstrofa() {
+  if (ed.estrofas >= 6 && nEstrofas() >= 6) { aviso('Máximo 6 estrofas.'); return; }
+  ed.estrofas = Math.min(6, nEstrofas() + 1);
+  actualizarPanel();
+  const inp = $('#ed-letras').lastElementChild; if (inp && !inp.disabled) inp.focus();
+}
+async function quitarEstrofa() {
+  const N = nEstrofas();
+  if (N <= 1) return;
+  const con = linea().filter((n) => (n.extras || []).length >= N - 1 && (n.extras || [])[N - 2]);
+  if (con.length && !(await confirmar({ title: 'Quitar la última estrofa', text: `Se borrará la letra de la estrofa ${N} en ${con.length} nota(s).`, confirmButtonText: 'Quitar', cancelButtonText: 'Cancelar' }))) return;
+  const c = {};
+  linea().forEach((n) => { if ((n.extras || []).length >= N - 1) c[n.key] = { extras: n.extras.slice(0, N - 2) }; });
+  ed.estrofas = N - 1;
+  if (Object.keys(c).length) aplicar(c); else actualizarPanel();
 }
 
 function deshacer() { if (ed.pos > 0) { ed.pos--; restaurar(ed.hist[ed.pos]); } }
@@ -647,12 +682,25 @@ function actualizarPanel() {
   $('#ed-comp-menos').disabled = ed.extra === 0;
   $('#ed-contador').textContent = r.total ? String(r.total) : '';
 
-  const inp = $('#ed-letra');
-  inp.disabled = !n;
-  if (document.activeElement !== inp || inp.dataset.key !== (ed.key || '')) {   // no pisar lo que se está escribiendo
-    inp.value = n ? (n.letra || '') : '';
-    inp.dataset.key = ed.key || '';
+  const N = nEstrofas(), caja = $('#ed-letras');
+  while (caja.children.length < N) {   // un campo por estrofa
+    const nuevo = document.createElement('input');
+    nuevo.type = 'text'; nuevo.maxLength = 60; nuevo.autocomplete = 'off'; nuevo.spellcheck = false;
+    nuevo.id = 'ed-letra-' + (caja.children.length + 1); nuevo.dataset.v = caja.children.length; nuevo.className = 'ed-letra-in';
+    caja.appendChild(nuevo);
   }
+  while (caja.children.length > N) caja.removeChild(caja.lastElementChild);
+  [...caja.children].forEach((inp, v) => {
+    inp.disabled = !n;
+    inp.placeholder = v === 0 ? 'Sílaba o texto · Enter pasa a la siguiente nota' : 'Estrofa ' + (v + 1) + ' (debajo de la anterior)';
+    inp.setAttribute('aria-label', 'Letra, estrofa ' + (v + 1));
+    if (document.activeElement !== inp || inp.dataset.key !== (ed.key || '')) {   // no pisar lo que se está escribiendo
+      inp.value = n ? (v === 0 ? (n.letra || '') : ((n.extras || [])[v - 1] || '')) : '';
+      inp.dataset.key = ed.key || '';
+    }
+  });
+  $('#ed-estrofa-menos').disabled = N <= 1;
+  $('#ed-estrofa-mas').disabled = N >= 6;
   $('#ed-aviso').textContent = polifonica(P.voz())
     ? 'Esta voz tiene notas simultáneas (divisi): solo se editan las notas que ves en la partitura; las demás no se tocan.' : '';
 }
@@ -692,7 +740,7 @@ function alClicNota(pn, rs) {
 }
 function alCargar(song, key) {
   ed.activo = false; document.body.classList.remove('modo-edicion');
-  ed.ov = {}; ed.extra = 0; ed.warps = []; ed.hist = [{ ov: {}, extra: 0, warps: [] }]; ed.pos = 0; ed.key = null; ed.rs = null; ed.nuevoId = 0;
+  ed.ov = {}; ed.extra = 0; ed.warps = []; ed.hist = [{ ov: {}, extra: 0, warps: [] }]; ed.pos = 0; ed.key = null; ed.rs = null; ed.nuevoId = 0; ed.estrofas = 1;
   ed.libId = key && key.indexOf('lib|') === 0 ? key.slice(4) : null;
   ed.nMeasBase = song.nMeas;
   ed.base = new Map();
@@ -738,16 +786,20 @@ function init() {
   $('#voice').addEventListener('change', () => setTimeout(actualizarPanel, 0));
 
   // Letra: se guarda al salir del campo; Enter o Tab pasan a la nota siguiente (Mayús+Tab, a la anterior) sin perder el foco.
-  const inp = $('#ed-letra');
-  inp.addEventListener('change', () => { cambiarLetra(inp.dataset.key, inp.value); });
-  inp.addEventListener('keydown', (e) => {
+  // En cada estrofa, Enter/Tab pasan a la misma estrofa de la nota vecina.
+  const caja = $('#ed-letras');
+  caja.addEventListener('change', (e) => { const inp = e.target; cambiarLetra(inp.dataset.key, inp.value, +inp.dataset.v); });
+  caja.addEventListener('keydown', (e) => {
+    const inp = e.target, v = +inp.dataset.v;
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      cambiarLetra(inp.dataset.key, inp.value);
+      cambiarLetra(inp.dataset.key, inp.value, v);
       vecina(e.shiftKey ? -1 : 1);
-      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+      setTimeout(() => { const sig = caja.children[v]; if (sig) { sig.focus(); sig.select(); } }, 0);
     } else if (e.key === 'Escape') { inp.blur(); }
   });
+  $('#ed-estrofa-mas').addEventListener('click', nuevaEstrofa);
+  $('#ed-estrofa-menos').addEventListener('click', quitarEstrofa);
 
   addEventListener('keydown', (e) => {
     if (!ed.activo || $('#panel-ensayo').classList.contains('oculto') || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;

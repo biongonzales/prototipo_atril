@@ -74,9 +74,13 @@ function parseMidi(buf) {
         const dd = Math.abs(n.start - e.tick);
         if (dd < dist - 1e-9 || (Math.abs(dd - dist) < 1e-9 && mejor && n.midi > mejor.midi)) { mejor = n; dist = dd; }
       });
-      if (!mejor || dist > div / 8 || mejor.letraEv !== undefined) return;
-      mejor.letra = decodificar(e.data).replace(/[\r\n]+/g, '').replace(/^[\\/]+/, '');
-      mejor.letraEv = i;
+      if (!mejor || dist > div / 8) return;
+      const txt = decodificar(e.data).replace(/[\r\n]+/g, '').replace(/^[\\/]+/, '');
+      if (mejor.letraEv === undefined) { mejor.letra = txt.trim() ? txt : ''; mejor.letraEv = i; return; }
+      // otra letra en el mismo instante que la primera: es la estrofa siguiente de esa nota
+      if (e.tick === events[mejor.letraEv].tick && (mejor.extras || []).length < 5) {
+        (mejor.extras = mejor.extras || []).push(txt.trim() ? txt : ''); (mejor.extrasEv = mejor.extrasEv || []).push(i);
+      }
     });
     out.tracks.push({ name, notes, events });
     p = end;
@@ -91,7 +95,7 @@ function monoLine(notes) {
   const out = [];
   for (const n of s) {
     if (out.length && Math.abs(out[out.length - 1].start - n.start) < EPS) continue;
-    out.push({ midi: n.midi, start: n.start, end: n.end, key: n.key, letra: n.letra });
+    out.push({ midi: n.midi, start: n.start, end: n.end, key: n.key, letra: n.letra, extras: n.extras || [] });
   }
   for (let i = 0; i < out.length - 1; i++) if (out[i].end > out[i + 1].start) out[i].end = out[i + 1].start;
   return out.filter((n) => n.end - n.start > EPS);
@@ -126,7 +130,7 @@ function buildSong(parsed, title) {
       // key identifica la nota en el archivo original (pista:evento de nota-on); base es el estado sin editar.
       const notes = byCh[ch].map((n) => {
         const s = q4(n.start / parsed.ppq); let e = q4(n.end / parsed.ppq); if (e <= s) e = s + 0.25;
-        return { midi: n.midi, start: s, end: e, key: ti + ':' + n.on, letra: n.letra || '', vel: n.vel };
+        return { midi: n.midi, start: s, end: e, key: ti + ':' + n.on, letra: n.letra || '', extras: n.extras || [], vel: n.vel };
       });
       let name = t.name || `Voz ${voices.length + 1}`;
       if (chs.length > 1) name += ` (canal ${+ch + 1})`;
@@ -262,6 +266,7 @@ function buildMeasures(notes, mb, nMeas, compuesto) {
       parts.forEach((o, k) => items.push({
         rest: false, noteIdx: i, midi: n.midi, code: o[1], dots: o[2], len: o[0],
         letra: k === 0 && n.start >= ms - EPS ? (n.letra || '') : '',   // la letra va bajo la primera figura de la nota
+        letras: k === 0 && n.start >= ms - EPS ? [n.letra || ''].concat(n.extras || []) : [],   // estrofa 1, 2, 3…
         tiePrev: k > 0 || n.start < ms - EPS,
         tieNext: k < parts.length - 1 || n.end > me + EPS
       }));
@@ -293,7 +298,9 @@ function renderScore() {
   const padL = 6, avail = W - padL - 8;
   const firstExtra = (mi) => 50 + (keyN ? keyN * 10 + 8 : 0) + (mi === 0 ? 30 : 0);
   // Ancho mínimo del compás: 30 por figura, o más si la letra de una sílaba necesita sitio para no pisar a la vecina.
-  const base = measures.map((it) => Math.max(140, 44 + it.reduce((a, x) => a + Math.max(30, x.letra ? x.letra.length * 7.5 + 12 : 30), 0)));
+  const anchoLetra = (x) => (x.letras && x.letras.length ? Math.max.apply(null, x.letras.map((t) => t.length)) : 0);
+  const base = measures.map((it) => Math.max(140, 44 + it.reduce((a, x) => a + Math.max(30, anchoLetra(x) ? anchoLetra(x) * 7.5 + 12 : 30), 0)));
+  const nEstrofas = Math.max(1, ...measures.map((it) => Math.max(1, ...it.map((x) => (x.letras ? x.letras.length : 0)))));
   const lines = []; let cur = [], used = 0;
   measures.forEach((it, mi) => {
     const need = base[mi] + (cur.length === 0 ? firstExtra(mi) : 0);
@@ -302,7 +309,7 @@ function renderScore() {
   });
   if (cur.length) lines.push(cur);
 
-  const LH = 140, H = lines.length * LH + 12;
+  const LH = 140 + 16 * (nEstrofas - 1), H = lines.length * LH + 12;
   const renderer = new VF.Renderer(host, VF.Renderer.Backends.SVG);
   renderer.resize(W, H);
   const ctx = renderer.getContext();
@@ -318,6 +325,7 @@ function renderScore() {
 
   lines.forEach((ms, li) => {
     const lyrics = [];
+    let pieSistema = 0;   // lo más bajo que llega el dibujo de las notas (cabezas, plicas y barras) en este sistema
     const extraFirst = firstExtra(ms[0]);
     const sum = ms.reduce((a, mi) => a + base[mi], 0) + extraFirst;
     let f = avail / sum; if (li === lines.length - 1) f = Math.min(f, 1.35); f = Math.max(f, 0.6);
@@ -371,11 +379,9 @@ function renderScore() {
         const g = ctx.openGroup('pn'); g.classList.add('pn');
         n.setContext(ctx).draw();
         ctx.closeGroup();
-        if (it.letra) {
-          let pie = stave.getBottomLineY();
-          try { const b = g.getBBox(); pie = Math.max(pie, b.y + b.height); } catch (e) { /* sin bbox */ }
-          lyrics.push({ txt: it.letra, x: (n.getNoteHeadBeginX() + n.getNoteHeadEndX()) / 2, pie });
-        }
+        try { const b = g.getBBox(); pieSistema = Math.max(pieSistema, b.y + b.height); } catch (e) { /* sin bbox */ }
+        pieSistema = Math.max(pieSistema, stave.getBottomLineY());
+        if (it.letras && it.letras.some((t) => t)) lyrics.push({ txts: it.letras, x: (n.getNoteHeadBeginX() + n.getNoteHeadEndX()) / 2 });
         const piece = { g, noteIdx: it.rest ? -1 : it.noteIdx, sys: li, rs: it.rest ? { ini: it.ini, len: it.len } : null };
         try {
           const bb = g.getBBox(), r = document.createElementNS(NS, 'rect');
@@ -401,21 +407,25 @@ function renderScore() {
         const g = ctx.openGroup('pb'); g.classList.add('pb');
         b.setContext(ctx).draw();
         ctx.closeGroup();
+        try { const bb = g.getBBox(); pieSistema = Math.max(pieSistema, bb.y + bb.height); } catch (e) { /* sin bbox */ }
         const first = pieceOf.get(b.getNotes()[0]);
         ui.beams.push({ g, noteIdx: first ? first.noteIdx : -1 });
       });
       x += w;
     });
-    // La letra de todo el sistema va en una misma línea, por debajo de la nota más baja.
+    // La letra de todo el sistema va alineada, con un margen por debajo de lo más bajo que se dibuja; cada estrofa, en su fila.
     if (lyrics.length) {
-      const base = Math.max(...lyrics.map((l) => l.pie)) + 16;
+      const y0 = pieSistema + 18;
       lyrics.forEach((l) => {
-        const t = document.createElementNS(NS, 'text');
-        t.setAttribute('class', 'letra'); t.setAttribute('x', l.x); t.setAttribute('y', base);
-        t.setAttribute('text-anchor', 'middle'); t.setAttribute('pointer-events', 'none');
-        t.setAttribute('font-family', 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
-        t.textContent = l.txt;
-        svg.appendChild(t);
+        l.txts.forEach((txt, r) => {
+          if (!txt) return;
+          const t = document.createElementNS(NS, 'text');
+          t.setAttribute('class', 'letra'); t.setAttribute('x', l.x); t.setAttribute('y', y0 + r * 16);
+          t.setAttribute('text-anchor', 'middle'); t.setAttribute('pointer-events', 'none');
+          t.setAttribute('font-family', 'Outfit, system-ui, sans-serif'); t.setAttribute('font-size', 13);
+          t.textContent = txt;
+          svg.appendChild(t);
+        });
       });
     }
   });

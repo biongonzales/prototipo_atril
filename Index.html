@@ -177,7 +177,11 @@
               <div class="edicion-fila">
                 <div class="edicion-grupo ed-letra-grupo">
                   <label class="ed-etiqueta" for="ed-letra">Letra bajo la nota</label>
-                  <input id="ed-letra" type="text" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Sílaba o texto · Enter pasa a la siguiente nota" disabled>
+                  <div id="ed-letras" class="ed-letras"><input id="ed-letra" class="ed-letra-in" data-v="0" type="text" maxlength="60" autocomplete="off" spellcheck="false" placeholder="Sílaba o texto · Enter pasa a la siguiente nota" disabled></div>
+                  <div class="ed-btns ed-estrofas">
+                    <button type="button" class="btn btn-chico" id="ed-estrofa-mas" title="Otra estrofa: una segunda letra debajo de la primera"><i data-lucide="plus"></i><span>Estrofa</span></button>
+                    <button type="button" class="btn btn-chico" id="ed-estrofa-menos" aria-label="Quitar la última estrofa" title="Quitar la última estrofa" disabled><i data-lucide="minus"></i></button>
+                  </div>
                 </div>
                 <div class="edicion-grupo">
                   <span class="ed-etiqueta">Silencio</span>
@@ -295,7 +299,7 @@
               <li><strong>Escribir una nota:</strong> toca un silencio y elige una duración; la nota aparece ahí con la altura de la vecina y la ajustas con ±½ y ±8ª. Solo cabe dentro del hueco libre.</li>
               <li><strong>Convertir una nota en silencio:</strong> botón «Convertir en silencio» (o la tecla Supr). Para dejar un silencio al final de una nota, acórtala: lo que sobra queda como silencio.</li>
               <li><strong>Añadir compases:</strong> «Añadir compás» suma un compás de silencio al final de la pieza, por si quieres escribir algo después de la última nota. «−» quita los añadidos mientras estén vacíos.</li>
-              <li><strong>Letra:</strong> con una nota elegida, escribe la sílaba o el texto en «Letra bajo la nota». Enter (o Tab) guarda y pasa a la nota siguiente, Mayús+Tab a la anterior. La letra queda en el MIDI como letra estándar y se ve siempre bajo las notas en el Ensayo. Si solo escribiste letra, el botón dice «Guardar letra» y se actualiza el mismo MIDI, sin crear una versión nueva; si además cambias alguna nota, se guarda como versión nueva.</li>
+              <li><strong>Letra:</strong> con una nota elegida, escribe la sílaba o el texto en «Letra bajo la nota». Enter (o Tab) guarda y pasa a la nota siguiente, Mayús+Tab a la anterior. La letra queda en el MIDI como letra estándar y se ve siempre bajo las notas en el Ensayo. Si solo escribiste letra, el botón dice «Guardar letra» y se actualiza el mismo MIDI, sin crear una versión nueva; si además cambias alguna nota, se guarda como versión nueva. Con «+ Estrofa» puedes poner una segunda (o tercera…) letra debajo de la primera: es útil cuando varias estrofas comparten la melodía. Enter o Tab pasan a la misma estrofa de la nota siguiente.</li>
               <li><strong>Duración:</strong> elige redonda, blanca, negra… con o sin puntillo. Con «Mover todas las voces juntas» marcado (lo normal), todas las voces cambian igual: si alargas una nota, lo que suena a la vez en las demás voces se estira lo mismo y todo lo que sigue se corre, así el coro no se desalinea y no aparecen silencios nuevos. Desmárcalo para tocar solo la voz elegida: entonces, al acortar, lo que sobra queda como silencio y, al alargar, las notas siguientes de esa voz se corren (nunca se borran). La pieza crece sola con compases nuevos si hace falta.</li>
               <li><strong>Insertar:</strong> con una nota (o un silencio) elegida, escoge una duración y pulsa «Nota» o «Silencio» para meterla antes o después de la nota elegida; todo lo que sigue se corre para hacerle sitio.</li>
               <li><strong>Compositor y arreglo:</strong> se piden al subir un MIDI (son opcionales) y se cambian con «Editar» en la Biblioteca. Las versiones heredan esos datos.</li>
